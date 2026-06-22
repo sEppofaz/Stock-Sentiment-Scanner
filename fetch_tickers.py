@@ -1,66 +1,62 @@
 #!/usr/bin/env python3
-"""Einmaliges Script: Russell 2000 Ticker von iShares laden.
+"""Einmaliges Script: Russell 2000 Ticker via Finnhub-API laden.
 Aufruf: python3 fetch_tickers.py
 Erzeugt: tickers.csv (Spalten: ticker, name)
+Voraussetzung: FINNHUB_API_KEY in Umgebungsvariablen gesetzt.
 """
 import csv
-import io
+import os
 import sys
 import requests
 from pathlib import Path
 
-# iShares Russell 2000 ETF (IWM) – CSV-Download
-URL = (
-    "https://www.ishares.com/us/products/239710/IWM/"
-    "1467271812596.ajax?fileType=csv&fileName=IWM_holdings&dataType=fund"
-)
-
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "Referer": "https://www.ishares.com/us/products/239710/",
-}
-
+KEY = os.environ.get("FINNHUB_API_KEY", "")
 OUT = Path(__file__).parent / "tickers.csv"
 
 
 def main():
-    print("Lade Russell 2000 Holdings von iShares …")
-    resp = requests.get(URL, headers=HEADERS, timeout=30)
-    resp.raise_for_status()
-
-    lines = resp.text.splitlines()
-
-    # Die iShares-CSV hat Metadaten-Zeilen am Anfang.
-    # Die echte Kopfzeile enthält "Ticker" als erstes Feld.
-    start = None
-    for i, line in enumerate(lines):
-        if line.startswith("Ticker,") or line.startswith('"Ticker"'):
-            start = i
-            break
-
-    if start is None:
-        print("FEHLER: Kopfzeile nicht gefunden. iShares hat evtl. das Format geändert.")
-        print("Ersten 10 Zeilen zur Diagnose:")
-        for l in lines[:10]:
-            print(" ", l)
+    if not KEY:
+        print("FEHLER: FINNHUB_API_KEY nicht gesetzt.")
         sys.exit(1)
 
-    reader = csv.DictReader(io.StringIO("\n".join(lines[start:])))
+    print("Lade Russell 2000 Constituents von Finnhub (/indices/constituents?symbol=^RUT) …")
+    r = requests.get(
+        "https://finnhub.io/api/v1/indices/constituents",
+        params={"symbol": "^RUT", "token": KEY},
+        timeout=30,
+    )
+
+    if r.status_code == 403:
+        print("FEHLER: Finnhub liefert 403 – Indices-Endpoint ist im Free Tier nicht verfügbar.")
+        print("→ Manuelle Alternative: tickers.csv lokal vorbereiten und per scp hochladen.")
+        print("  Quelle: https://www.ishares.com/us/products/239710/ → 'Download Holdings' (CSV)")
+        print("  Dann: scp tickers.csv root@89.167.104.145:/opt/sentiment-scanner/tickers.csv")
+        sys.exit(1)
+
+    r.raise_for_status()
+    data = r.json()
+    constituents = data.get("constituents", [])
+
+    if not constituents:
+        print(f"FEHLER: Keine Daten erhalten. Antwort: {data}")
+        sys.exit(1)
 
     count = 0
     with open(OUT, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["ticker", "name"])
-        for row in reader:
-            ticker = (row.get("Ticker") or "").strip()
-            name = (row.get("Name") or "").strip()
-            # Überspringe Cash-Positionen und leere Zeilen
-            if ticker and ticker not in ("-", "USD", "") and not ticker.startswith("-"):
-                writer.writerow([ticker, name])
-                count += 1
+        for item in constituents:
+            if isinstance(item, str):
+                # Finnhub gibt manchmal nur Ticker-Strings zurück
+                writer.writerow([item.strip(), ""])
+            elif isinstance(item, dict):
+                ticker = item.get("symbol", "").strip()
+                name = item.get("description", "").strip()
+                if ticker:
+                    writer.writerow([ticker, name])
+            else:
+                continue
+            count += 1
 
     print(f"Fertig: {count} Ticker in {OUT}")
 
