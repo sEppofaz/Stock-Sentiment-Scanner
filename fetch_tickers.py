@@ -10,11 +10,26 @@ import sys
 import requests
 from pathlib import Path
 
-KEY = os.environ.get("FINNHUB_API_KEY", "")
 OUT = Path(__file__).parent / "tickers.csv"
+_SECRETS = Path("/etc/pka/secrets.env")
+
+
+def _load_env():
+    """Secrets aus EnvironmentFile laden falls FINNHUB_API_KEY noch nicht gesetzt."""
+    if os.environ.get("FINNHUB_API_KEY"):
+        return
+    if not _SECRETS.exists():
+        return
+    for line in _SECRETS.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, _, v = line.partition("=")
+            os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
 def main():
+    _load_env()
+    KEY = os.environ.get("FINNHUB_API_KEY", "")
     if not KEY:
         print("FEHLER: FINNHUB_API_KEY nicht gesetzt.")
         sys.exit(1)
