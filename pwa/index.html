@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1c1c1e" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Sentiment">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.json">
+<title>Sentiment Scanner</title>
+<style>
+:root {
+  --bg:     #f2f2f7;
+  --bg2:    #ffffff;
+  --bg3:    #e5e5ea;
+  --accent: #065f46;
+  --accent2:#047857;
+  --text:   #000000;
+  --muted:  #6e6e73;
+  --green:  #34c759;
+  --yellow: #ff9f0a;
+  --red:    #ff3b30;
+  --border: #d1d1d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:     #1c1c1e;
+    --bg2:    #2c2c2e;
+    --bg3:    #3a3a3c;
+    --accent: #059669;
+    --accent2:#10b981;
+    --text:   #ffffff;
+    --muted:  #aeaeb2;
+    --green:  #30d158;
+    --yellow: #ffd60a;
+    --red:    #ff453a;
+    --border: #48484a;
+  }
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--bg); color: var(--text); min-height: 100vh; }
+
+/* Pull-to-Refresh */
+.ptr { position: fixed; top: -60px; left: 50%; transform: translateX(-50%);
+  background: var(--bg2); border-radius: 20px; padding: 8px 16px;
+  font-size: .85rem; color: var(--muted); display: flex; align-items: center;
+  gap: 8px; box-shadow: 0 2px 12px rgba(0,0,0,.15);
+  transition: top .2s ease; z-index: 100; }
+.ptr.show { top: calc(env(safe-area-inset-top) + 10px); }
+.ptr-spin { width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid var(--bg3); border-top-color: var(--accent);
+  animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Header */
+header { background: var(--accent); color: #fff;
+  padding: calc(16px + env(safe-area-inset-top)) 16px 0;
+  padding-left: calc(16px + env(safe-area-inset-left));
+  padding-right: calc(16px + env(safe-area-inset-right)); }
+.hd-row { display: flex; align-items: center; justify-content: space-between;
+  padding-bottom: 12px; }
+.hd-title { font-size: 1.05rem; font-weight: 700; }
+.hd-sub { font-size: .75rem; opacity: .75; margin-top: 1px; }
+#btn-info { background: rgba(255,255,255,.15); border: none; color: #fff;
+  height: 34px; padding: 0 12px; border-radius: 9px; font-size: 13px;
+  font-weight: 600; cursor: pointer; transition: background .15s; }
+#btn-info:active { background: rgba(255,255,255,.3); }
+
+/* Tabs */
+.tabs { display: flex; border-bottom: 1px solid rgba(255,255,255,.2); }
+.tab { flex: 1; background: none; border: none; color: rgba(255,255,255,.6);
+  font-size: .85rem; font-weight: 600; padding: 10px 0; cursor: pointer;
+  border-bottom: 2px solid transparent; transition: color .15s; display: flex;
+  align-items: center; justify-content: center; gap: 5px; }
+.tab.active { color: #fff; border-bottom-color: #fff; }
+
+/* Main */
+main { padding: 16px;
+  padding-left: calc(16px + env(safe-area-inset-left));
+  padding-right: calc(16px + env(safe-area-inset-right));
+  padding-bottom: calc(32px + env(safe-area-inset-bottom)); }
+
+/* Screens */
+.screen { display: none; }
+.screen.active { display: block; }
+
+/* Status-Bar */
+#status-bar { background: var(--bg2); border-radius: 12px;
+  padding: 10px 14px; margin-bottom: 14px;
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 8px; }
+.status-info { font-size: .8rem; color: var(--muted); }
+.status-info b { color: var(--text); }
+#btn-scan { background: var(--accent); color: #fff; border: none;
+  border-radius: 9px; padding: 7px 14px; font-size: .8rem; font-weight: 600;
+  cursor: pointer; display: flex; align-items: center; gap: 5px;
+  min-height: 34px; transition: opacity .15s; }
+#btn-scan:disabled { opacity: .5; cursor: not-allowed; }
+#btn-scan:active:not(:disabled) { opacity: .8; }
+
+/* Ergebnis-Karten (mobile) / Tabelle (desktop) */
+.result-card { background: var(--bg2); border-radius: 14px;
+  padding: 14px; margin-bottom: 10px; }
+.rc-header { display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px; }
+.rc-rank { font-size: .75rem; color: var(--muted); }
+.rc-ticker { font-size: 1rem; font-weight: 700; }
+.rc-name { font-size: .8rem; color: var(--muted); margin-bottom: 8px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rc-score { font-size: 1.4rem; font-weight: 800; color: var(--accent2); }
+.rc-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chip { font-size: .75rem; padding: 3px 9px; border-radius: 20px;
+  background: var(--bg3); color: var(--text); white-space: nowrap; }
+.chip.green { background: #052e16; color: #bbf7d0; }
+.chip.yellow { background: #451a03; color: #fef3c7; }
+
+/* Tabelle desktop */
+@media (min-width: 700px) {
+  .result-card { display: none; }
+  #tbl-wrap { display: block; }
+}
+#tbl-wrap { display: none; overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+th { background: var(--bg2); padding: 9px 12px; text-align: left;
+  font-size: .75rem; color: var(--muted); font-weight: 600;
+  border-bottom: 1px solid var(--border); cursor: pointer;
+  white-space: nowrap; user-select: none; }
+th:hover { color: var(--accent2); }
+td { padding: 10px 12px; border-bottom: 1px solid var(--border);
+  background: var(--bg2); }
+tr:last-child td { border-bottom: none; }
+.td-score { font-weight: 700; color: var(--accent2); }
+.td-ticker { font-weight: 700; }
+
+/* Leerer Zustand */
+#empty { text-align: center; padding: 48px 16px; color: var(--muted); }
+#empty svg { opacity: .3; margin-bottom: 12px; }
+
+/* Config-Screen */
+.cfg-section { background: var(--bg2); border-radius: 14px;
+  padding: 14px; margin-bottom: 14px; }
+.cfg-title { font-size: .75rem; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .5px; margin-bottom: 12px; }
+.cfg-row { display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 0; border-bottom: 1px solid var(--border); gap: 12px; }
+.cfg-row:last-child { border-bottom: none; }
+.cfg-label { font-size: .9rem; flex: 1; }
+.cfg-input { width: 110px; padding: 6px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--bg3); color: var(--text);
+  font-size: .9rem; text-align: right; }
+.cfg-toggle { position: relative; width: 44px; height: 26px; flex-shrink: 0; }
+.cfg-toggle input { opacity: 0; width: 0; height: 0; }
+.cfg-slider { position: absolute; inset: 0; background: var(--bg3);
+  border-radius: 26px; transition: background .2s; cursor: pointer; }
+.cfg-slider:before { content: ""; position: absolute; width: 20px; height: 20px;
+  left: 3px; top: 3px; background: #fff; border-radius: 50%;
+  transition: transform .2s; }
+.cfg-toggle input:checked + .cfg-slider { background: var(--accent); }
+.cfg-toggle input:checked + .cfg-slider:before { transform: translateX(18px); }
+.cfg-times { display: flex; gap: 8px; flex-wrap: wrap; }
+.cfg-time-tag { background: var(--bg3); border-radius: 8px;
+  padding: 4px 10px; font-size: .85rem; display: flex; align-items: center; gap: 6px; }
+.cfg-time-del { background: none; border: none; color: var(--red);
+  cursor: pointer; font-size: 1rem; padding: 0 2px; line-height: 1; }
+.cfg-time-add { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+.cfg-time-add input { flex: 1; padding: 7px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--bg3); color: var(--text); font-size: .9rem; }
+.btn-add { background: var(--accent); color: #fff; border: none;
+  border-radius: 8px; padding: 7px 14px; font-size: .85rem; font-weight: 600;
+  cursor: pointer; }
+.btn-save { width: 100%; padding: 14px; background: var(--accent); color: #fff;
+  border: none; border-radius: 12px; font-size: 1rem; font-weight: 700;
+  cursor: pointer; margin-top: 8px; min-height: 50px; }
+.btn-save:active { opacity: .8; }
+.save-ok { text-align: center; font-size: .85rem; color: var(--green);
+  margin-top: 8px; display: none; }
+
+/* Scroll-to-top */
+.back-top { position: fixed;
+  bottom: calc(24px + env(safe-area-inset-bottom)); right: 16px;
+  width: 40px; height: 40px; border-radius: 50%; background: var(--accent);
+  color: #fff; border: none; font-size: 20px; cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0,0,0,.25); display: none;
+  align-items: center; justify-content: center; z-index: 200;
+  transition: opacity .2s; }
+.back-top.vis { display: flex; }
+.back-top:active { opacity: .7; }
+
+/* Info-Overlay */
+#info-overlay { display: none; position: fixed; inset: 0; z-index: 300;
+  background: rgba(0,0,0,.4); }
+#info-overlay.show { display: flex; align-items: flex-end; }
+#info-sheet { background: var(--bg2); border-radius: 20px 20px 0 0;
+  width: 100%; max-height: 85vh; display: flex; flex-direction: column;
+  box-shadow: 0 -4px 20px rgba(0,0,0,.15); }
+#info-sheet-hd { padding: 14px 16px 10px; display: flex;
+  justify-content: space-between; align-items: center;
+  border-bottom: 1px solid var(--border); flex-shrink: 0; }
+#info-sheet-hd strong { font-size: 1rem; }
+#btn-info-close { background: var(--bg3); border: none; border-radius: 16px;
+  padding: 5px 14px; font-size: 13px; cursor: pointer; color: var(--text); }
+#info-sheet-body { overflow-y: auto; padding: 16px 16px calc(20px + env(safe-area-inset-bottom));
+  -webkit-overflow-scrolling: touch; font-size: .9rem; line-height: 1.6; }
+.info-row { display: flex; gap: 10px; margin-bottom: 12px; }
+.info-icon { flex-shrink: 0; width: 22px; margin-top: 2px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="ptr" id="ptr"><div class="ptr-spin"></div> Aktualisiere…</div>
+
+<header>
+  <div class="hd-row">
+    <div>
+      <div class="hd-title">Sentiment Scanner</div>
+      <div class="hd-sub" id="hd-sub">Russell 2000 Small Caps</div>
+    </div>
+    <button id="btn-info" onclick="document.getElementById('info-overlay').classList.add('show')">Info</button>
+  </div>
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('dashboard')" id="tab-dashboard">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      Dashboard
+    </button>
+    <button class="tab" onclick="switchTab('config')" id="tab-config">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+      Einstellungen
+    </button>
+  </div>
+</header>
+
+<main>
+
+  <!-- Dashboard -->
+  <div class="screen active" id="screen-dashboard">
+    <div id="status-bar">
+      <div class="status-info" id="status-text">Lade Daten…</div>
+      <button id="btn-scan" onclick="triggerScan()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        Scan jetzt
+      </button>
+    </div>
+    <div id="results-container"></div>
+    <div id="tbl-wrap">
+      <table id="results-table">
+        <thead>
+          <tr>
+            <th onclick="sortBy('rank')">#</th>
+            <th onclick="sortBy('ticker')">Ticker</th>
+            <th onclick="sortBy('name')">Name</th>
+            <th onclick="sortBy('score')">Score ↕</th>
+            <th onclick="sortBy('bullish_pct')">Bullish%</th>
+            <th onclick="sortBy('buzz')">Buzz</th>
+            <th onclick="sortBy('market_cap')">MarketCap</th>
+            <th onclick="sortBy('articles_week')">News</th>
+          </tr>
+        </thead>
+        <tbody id="tbl-body"></tbody>
+      </table>
+    </div>
+    <div id="empty" style="display:none">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h18v18H3z"/><path d="M9 9h6M9 12h6M9 15h4"/></svg>
+      <p>Noch kein Scan-Ergebnis.<br>Klick auf „Scan jetzt" zum Starten.</p>
+    </div>
+  </div>
+
+  <!-- Einstellungen -->
+  <div class="screen" id="screen-config">
+    <div class="cfg-section">
+      <div class="cfg-title">Scan-Zeiten (UTC, Mo–Fr)</div>
+      <div class="cfg-times" id="cfg-times"></div>
+      <div class="cfg-time-add">
+        <input type="time" id="new-time" step="1800">
+        <button class="btn-add" onclick="addTime()">+ Hinzufügen</button>
+      </div>
+    </div>
+
+    <div class="cfg-section">
+      <div class="cfg-title">Filter</div>
+      <div class="cfg-row">
+        <span class="cfg-label">Bullish % min.</span>
+        <input class="cfg-input" type="number" id="cfg-bullish-min" min="0" max="100">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Bearish % max.</span>
+        <input class="cfg-input" type="number" id="cfg-bearish-max" min="0" max="100">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">News min. (7d)</span>
+        <input class="cfg-input" type="number" id="cfg-news-min" min="1">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">MarketCap min. ($M)</span>
+        <input class="cfg-input" type="number" id="cfg-mc-min" min="0">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">MarketCap max. ($M)</span>
+        <input class="cfg-input" type="number" id="cfg-mc-max">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Buzz-Trend steigend</span>
+        <label class="cfg-toggle">
+          <input type="checkbox" id="cfg-buzz-rising">
+          <span class="cfg-slider"></span>
+        </label>
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Top N Ergebnisse</span>
+        <input class="cfg-input" type="number" id="cfg-top-n" min="10" max="200">
+      </div>
+    </div>
+
+    <button class="btn-save" onclick="saveConfig()">Speichern</button>
+    <div class="save-ok" id="save-ok">✓ Gespeichert</div>
+  </div>
+
+</main>
+
+<button class="back-top" id="back-top" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
+
+<!-- Info-Overlay -->
+<div id="info-overlay" onclick="if(event.target===this)this.classList.remove('show')">
+  <div id="info-sheet">
+    <div id="info-sheet-hd">
+      <strong>Info</strong>
+      <button id="btn-info-close" onclick="document.getElementById('info-overlay').classList.remove('show')">Schließen</button>
+    </div>
+    <div id="info-sheet-body">
+      <div class="info-row">
+        <span class="info-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg></span>
+        <span>Scannt Russell 2000 Small Caps täglich zweimal auf steigendes News-Sentiment via Finnhub Free API.</span>
+      </div>
+      <div class="info-row">
+        <span class="info-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span>
+        <span><b>Score-Formel:</b> 45 % Bullish-Sentiment + 30 % Buzz + 25 % NLP-Score. Optional: KGV-Bonus wenn 0 &lt; KGV &lt; 30.</span>
+      </div>
+      <div class="info-row">
+        <span class="info-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
+        <span>Kein Investment-Advice. Die Ergebnisse basieren auf öffentlichen News-Sentiment-Daten und sind keine Kauf- oder Verkaufsempfehlung.</span>
+      </div>
+      <div class="info-row">
+        <span class="info-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+        <span>Datenquelle: <b>Finnhub.io</b> (Free Tier, 60 Calls/Min). Ein Scan dauert ca. 30–40 Minuten.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Icons ─────────────────────────────────────────────────────────────────
+const ICON_PATHS = {
+  refresh: '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
+};
+function icon(name, size = 14) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[name] || ''}</svg>`;
+}
+
+// ── Pull-to-Refresh ───────────────────────────────────────────────────────
+const ptrEl = document.getElementById('ptr');
+let ptrStartY = 0, ptrActive = false;
+document.addEventListener('touchstart', e => {
+  if (window.scrollY === 0) { ptrStartY = e.touches[0].clientY; ptrActive = true; }
+}, { passive: true });
+document.addEventListener('touchmove', e => {
+  if (!ptrActive) return;
+  if (e.touches[0].clientY - ptrStartY > 50) ptrEl.classList.add('show');
+}, { passive: true });
+document.addEventListener('touchend', e => {
+  if (!ptrActive) return;
+  if (e.changedTouches[0].clientY - ptrStartY > 80) loadResults();
+  ptrEl.classList.remove('show');
+  ptrActive = false;
+}, { passive: true });
+
+// ── Scroll-to-Top ─────────────────────────────────────────────────────────
+window.addEventListener('scroll', () => {
+  document.getElementById('back-top').classList.toggle('vis', window.scrollY > 300);
+});
+
+// ── Tabs ──────────────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('screen-' + name).classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+  if (name === 'config') loadConfig();
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────
+let _results = [];
+let _sortKey = 'score';
+let _sortAsc = false;
+
+async function loadResults() {
+  try {
+    const r = await fetch('/sentiment/api/results');
+    if (!r.ok) { showEmpty(); return; }
+    const d = await r.json();
+    _results = d.results || [];
+    const at = d.scanned_at ? new Date(d.scanned_at) : null;
+    const sub = at
+      ? `${_results.length} Treffer · ${at.toLocaleString('de-AT', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}`
+      : 'Russell 2000 Small Caps';
+    document.getElementById('hd-sub').textContent = sub;
+    document.getElementById('status-text').innerHTML =
+      `<b>${d.scanned_count || '–'}</b> gescannt · <b>${d.results_count || _results.length}</b> Treffer`;
+    renderResults();
+  } catch (e) {
+    showEmpty();
+  }
+}
+
+function renderResults() {
+  if (!_results.length) { showEmpty(); return; }
+  document.getElementById('empty').style.display = 'none';
+
+  const sorted = [..._results].sort((a, b) => {
+    let av = a[_sortKey] ?? -1, bv = b[_sortKey] ?? -1;
+    if (typeof av === 'string') av = av.toLowerCase(), bv = (bv || '').toLowerCase();
+    return _sortAsc ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
+  });
+
+  // Mobile cards
+  const container = document.getElementById('results-container');
+  container.innerHTML = sorted.map((r, i) => {
+    const mc = r.market_cap ? `$${Math.round(r.market_cap / 1e6)}M` : '–';
+    const pe = r.pe ? `KGV ${r.pe.toFixed(1)}` : '';
+    return `<div class="result-card">
+      <div class="rc-header">
+        <span class="rc-rank">#${i + 1}</span>
+        <span class="rc-ticker">${r.ticker}</span>
+        <span class="rc-score">${r.score}</span>
+      </div>
+      <div class="rc-name">${r.name || '–'}</div>
+      <div class="rc-chips">
+        <span class="chip green">↑ Bullish ${r.bullish_pct}%</span>
+        <span class="chip">Buzz ${r.buzz.toFixed(2)}</span>
+        <span class="chip">${r.articles_week} News</span>
+        <span class="chip">${mc}</span>
+        ${pe ? `<span class="chip">${pe}</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  // Desktop table
+  document.getElementById('tbl-body').innerHTML = sorted.map((r, i) => {
+    const mc = r.market_cap ? `$${Math.round(r.market_cap / 1e6)}M` : '–';
+    return `<tr>
+      <td>${i + 1}</td>
+      <td class="td-ticker">${r.ticker}</td>
+      <td>${r.name || '–'}</td>
+      <td class="td-score">${r.score}</td>
+      <td>${r.bullish_pct}%</td>
+      <td>${r.buzz.toFixed(2)}</td>
+      <td>${mc}</td>
+      <td>${r.articles_week}</td>
+    </tr>`;
+  }).join('');
+}
+
+function sortBy(key) {
+  if (_sortKey === key) _sortAsc = !_sortAsc;
+  else { _sortKey = key; _sortAsc = false; }
+  renderResults();
+}
+
+function showEmpty() {
+  document.getElementById('results-container').innerHTML = '';
+  document.getElementById('tbl-body').innerHTML = '';
+  document.getElementById('empty').style.display = 'block';
+}
+
+// ── Scan auslösen ─────────────────────────────────────────────────────────
+async function triggerScan() {
+  const btn = document.getElementById('btn-scan');
+  btn.disabled = true;
+  btn.innerHTML = `${icon('refresh')} Läuft…`;
+  document.getElementById('status-text').innerHTML = '<b>Scan gestartet</b> – dauert ca. 30–40 Min.';
+  try {
+    await fetch('/sentiment/api/scan', { method: 'POST' });
+  } finally {
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.innerHTML = `${icon('refresh')} Scan jetzt`;
+    }, 10000);
+  }
+}
+
+// ── Config ────────────────────────────────────────────────────────────────
+let _scanTimes = [];
+
+async function loadConfig() {
+  const r = await fetch('/sentiment/api/config');
+  const cfg = await r.json();
+  const f = cfg.filter;
+  _scanTimes = cfg.scan_times_utc || [];
+  renderTimes();
+  document.getElementById('cfg-bullish-min').value = f.bullish_pct_min;
+  document.getElementById('cfg-bearish-max').value = f.bearish_pct_max;
+  document.getElementById('cfg-news-min').value = f.news_min_count;
+  document.getElementById('cfg-mc-min').value = Math.round(f.market_cap_min_usd / 1e6);
+  document.getElementById('cfg-mc-max').value = Math.round(f.market_cap_max_usd / 1e6);
+  document.getElementById('cfg-buzz-rising').checked = f.buzz_trend_rising;
+  document.getElementById('cfg-top-n').value = cfg.top_n_results;
+}
+
+function renderTimes() {
+  document.getElementById('cfg-times').innerHTML = _scanTimes.map((t, i) =>
+    `<span class="cfg-time-tag">${t}
+      <button class="cfg-time-del" onclick="removeTime(${i})">×</button>
+    </span>`
+  ).join('');
+}
+
+function addTime() {
+  const v = document.getElementById('new-time').value;
+  if (!v) return;
+  const hm = v.slice(0, 5);
+  if (!_scanTimes.includes(hm)) { _scanTimes.push(hm); _scanTimes.sort(); renderTimes(); }
+  document.getElementById('new-time').value = '';
+}
+
+function removeTime(i) {
+  _scanTimes.splice(i, 1);
+  renderTimes();
+}
+
+async function saveConfig() {
+  const cfg = {
+    scan_times_utc: _scanTimes,
+    filter: {
+      bullish_pct_min: +document.getElementById('cfg-bullish-min').value,
+      bearish_pct_max: +document.getElementById('cfg-bearish-max').value,
+      news_min_count:  +document.getElementById('cfg-news-min').value,
+      market_cap_min_usd: +document.getElementById('cfg-mc-min').value * 1e6,
+      market_cap_max_usd: +document.getElementById('cfg-mc-max').value * 1e6,
+      buzz_trend_rising: document.getElementById('cfg-buzz-rising').checked,
+    },
+    top_n_results: +document.getElementById('cfg-top-n').value,
+  };
+  await fetch('/sentiment/api/config', { method: 'POST', body: JSON.stringify(cfg) });
+  const ok = document.getElementById('save-ok');
+  ok.style.display = 'block';
+  setTimeout(() => ok.style.display = 'none', 2500);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+loadResults();
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sentiment/sw.js', { scope: '/sentiment/' })
+    .catch(e => console.warn('[sw]', e));
+}
+</script>
+</body>
+</html>

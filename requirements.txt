@@ -1,0 +1,5 @@
+flask>=3.0
+apscheduler>=3.10
+requests>=2.31
+cairosvg>=2.7
+gunicorn>=21.0

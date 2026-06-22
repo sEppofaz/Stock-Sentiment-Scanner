@@ -1,0 +1,12 @@
+{
+  "scan_times_utc": ["13:00", "19:30"],
+  "filter": {
+    "market_cap_max_usd": 2000000000,
+    "market_cap_min_usd": 50000000,
+    "bullish_pct_min": 40,
+    "bearish_pct_max": 30,
+    "buzz_trend_rising": true,
+    "news_min_count": 3
+  },
+  "top_n_results": 50
+}

@@ -1,0 +1,17 @@
+[Unit]
+Description=Stock Sentiment Scanner
+After=network.target
+
+[Service]
+User=webhook
+Group=webhook
+WorkingDirectory=/opt/sentiment-scanner
+EnvironmentFile=/etc/pka/secrets.env
+ExecStart=/opt/sentiment-scanner/venv/bin/python3 app.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
