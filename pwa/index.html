@@ -13,200 +13,179 @@
 <title>Sentiment Scanner</title>
 <style>
 :root {
-  --bg:     #f2f2f7;
-  --bg2:    #ffffff;
-  --bg3:    #e5e5ea;
-  --accent: #065f46;
-  --accent2:#047857;
-  --text:   #000000;
-  --muted:  #6e6e73;
-  --green:  #34c759;
-  --yellow: #ff9f0a;
-  --red:    #ff3b30;
-  --border: #d1d1d6;
+  --bg:#f2f2f7; --bg2:#ffffff; --bg3:#e5e5ea;
+  --accent:#065f46; --accent2:#047857;
+  --text:#000000; --muted:#6e6e73;
+  --green:#34c759; --yellow:#ff9f0a; --red:#ff3b30;
+  --border:#d1d1d6;
 }
-@media (prefers-color-scheme: dark) {
+@media (prefers-color-scheme:dark) {
   :root {
-    --bg:     #1c1c1e;
-    --bg2:    #2c2c2e;
-    --bg3:    #3a3a3c;
-    --accent: #059669;
-    --accent2:#10b981;
-    --text:   #ffffff;
-    --muted:  #aeaeb2;
-    --green:  #30d158;
-    --yellow: #ffd60a;
-    --red:    #ff453a;
-    --border: #48484a;
+    --bg:#1c1c1e; --bg2:#2c2c2e; --bg3:#3a3a3c;
+    --accent:#059669; --accent2:#10b981;
+    --text:#ffffff; --muted:#aeaeb2;
+    --green:#30d158; --yellow:#ffd60a; --red:#ff453a;
+    --border:#48484a;
   }
 }
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: var(--bg); color: var(--text); min-height: 100vh; }
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
 
 /* Pull-to-Refresh */
-.ptr { position: fixed; top: -60px; left: 50%; transform: translateX(-50%);
-  background: var(--bg2); border-radius: 20px; padding: 8px 16px;
-  font-size: .85rem; color: var(--muted); display: flex; align-items: center;
-  gap: 8px; box-shadow: 0 2px 12px rgba(0,0,0,.15);
-  transition: top .2s ease; z-index: 100; }
-.ptr.show { top: calc(env(safe-area-inset-top) + 10px); }
-.ptr-spin { width: 14px; height: 14px; border-radius: 50%;
-  border: 2px solid var(--bg3); border-top-color: var(--accent);
-  animation: spin .7s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
+.ptr{position:fixed;top:-60px;left:50%;transform:translateX(-50%);background:var(--bg2);border-radius:20px;padding:8px 16px;font-size:.85rem;color:var(--muted);display:flex;align-items:center;gap:8px;box-shadow:0 2px 12px rgba(0,0,0,.15);transition:top .2s ease;z-index:100}
+.ptr.show{top:calc(env(safe-area-inset-top) + 10px)}
+.ptr-spin{width:14px;height:14px;border-radius:50%;border:2px solid var(--bg3);border-top-color:var(--accent);animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 
 /* Header */
-header { background: var(--accent); color: #fff;
-  padding: calc(16px + env(safe-area-inset-top)) 16px 0;
-  padding-left: calc(16px + env(safe-area-inset-left));
-  padding-right: calc(16px + env(safe-area-inset-right)); }
-.hd-row { display: flex; align-items: center; justify-content: space-between;
-  padding-bottom: 12px; }
-.hd-title { font-size: 1.05rem; font-weight: 700; }
-.hd-sub { font-size: .75rem; opacity: .75; margin-top: 1px; }
-#btn-info { background: rgba(255,255,255,.15); border: none; color: #fff;
-  height: 34px; padding: 0 12px; border-radius: 9px; font-size: 13px;
-  font-weight: 600; cursor: pointer; transition: background .15s; }
-#btn-info:active { background: rgba(255,255,255,.3); }
+header{background:var(--accent);color:#fff;padding:calc(16px + env(safe-area-inset-top)) 16px 0;padding-left:calc(16px + env(safe-area-inset-left));padding-right:calc(16px + env(safe-area-inset-right))}
+.hd-row{display:flex;align-items:center;justify-content:space-between;padding-bottom:12px}
+.hd-title{font-size:1.05rem;font-weight:700}
+.hd-sub{font-size:.75rem;opacity:.75;margin-top:1px}
+#btn-info{background:rgba(255,255,255,.15);border:none;color:#fff;height:34px;padding:0 12px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;transition:background .15s}
+#btn-info:active{background:rgba(255,255,255,.3)}
 
 /* Tabs */
-.tabs { display: flex; border-bottom: 1px solid rgba(255,255,255,.2); }
-.tab { flex: 1; background: none; border: none; color: rgba(255,255,255,.6);
-  font-size: .85rem; font-weight: 600; padding: 10px 0; cursor: pointer;
-  border-bottom: 2px solid transparent; transition: color .15s; display: flex;
-  align-items: center; justify-content: center; gap: 5px; }
-.tab.active { color: #fff; border-bottom-color: #fff; }
+.tabs{display:flex;border-bottom:1px solid rgba(255,255,255,.2)}
+.tab{flex:1;background:none;border:none;color:rgba(255,255,255,.6);font-size:.85rem;font-weight:600;padding:10px 0;cursor:pointer;border-bottom:2px solid transparent;display:flex;align-items:center;justify-content:center;gap:5px}
+.tab.active{color:#fff;border-bottom-color:#fff}
+
+/* Progress-Bar */
+#progress-bar{display:none;background:var(--bg2);border-radius:12px;padding:12px 14px;margin-bottom:14px}
+#progress-bar.show{display:block}
+.pb-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:.8rem}
+.pb-label{font-weight:600}
+.pb-pct{color:var(--muted)}
+.pb-track{height:6px;background:var(--bg3);border-radius:3px;overflow:hidden}
+.pb-fill{height:100%;background:var(--accent);border-radius:3px;transition:width .3s ease;width:0%}
+.pb-ticker{font-size:.72rem;color:var(--muted);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* Main */
-main { padding: 16px;
-  padding-left: calc(16px + env(safe-area-inset-left));
-  padding-right: calc(16px + env(safe-area-inset-right));
-  padding-bottom: calc(32px + env(safe-area-inset-bottom)); }
-
-/* Screens */
-.screen { display: none; }
-.screen.active { display: block; }
+main{padding:16px;padding-left:calc(16px + env(safe-area-inset-left));padding-right:calc(16px + env(safe-area-inset-right));padding-bottom:calc(32px + env(safe-area-inset-bottom))}
+.screen{display:none}
+.screen.active{display:block}
 
 /* Status-Bar */
-#status-bar { background: var(--bg2); border-radius: 12px;
-  padding: 10px 14px; margin-bottom: 14px;
-  display: flex; align-items: center; justify-content: space-between;
-  flex-wrap: wrap; gap: 8px; }
-.status-info { font-size: .8rem; color: var(--muted); }
-.status-info b { color: var(--text); }
-#btn-scan { background: var(--accent); color: #fff; border: none;
-  border-radius: 9px; padding: 7px 14px; font-size: .8rem; font-weight: 600;
-  cursor: pointer; display: flex; align-items: center; gap: 5px;
-  min-height: 34px; transition: opacity .15s; }
-#btn-scan:disabled { opacity: .5; cursor: not-allowed; }
-#btn-scan:active:not(:disabled) { opacity: .8; }
+#status-bar{background:var(--bg2);border-radius:12px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
+.status-info{font-size:.8rem;color:var(--muted)}
+.status-info b{color:var(--text)}
+#btn-scan{background:var(--accent);color:#fff;border:none;border-radius:9px;padding:7px 14px;font-size:.8rem;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;min-height:34px;transition:opacity .15s}
+#btn-scan:disabled{opacity:.5;cursor:not-allowed}
+#btn-scan:active:not(:disabled){opacity:.8}
 
-/* Ergebnis-Karten (mobile) / Tabelle (desktop) */
-.result-card { background: var(--bg2); border-radius: 14px;
-  padding: 14px; margin-bottom: 10px; }
-.rc-header { display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 8px; }
-.rc-rank { font-size: .75rem; color: var(--muted); }
-.rc-ticker { font-size: 1rem; font-weight: 700; }
-.rc-name { font-size: .8rem; color: var(--muted); margin-bottom: 8px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rc-score { font-size: 1.4rem; font-weight: 800; color: var(--accent2); }
-.rc-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.chip { font-size: .75rem; padding: 3px 9px; border-radius: 20px;
-  background: var(--bg3); color: var(--text); white-space: nowrap; }
-.chip.green { background: #052e16; color: #bbf7d0; }
-.chip.yellow { background: #451a03; color: #fef3c7; }
+/* Karten */
+.result-card{background:var(--bg2);border-radius:14px;padding:14px;margin-bottom:10px}
+.result-card.pinned{border-left:3px solid var(--accent2)}
+.result-card.sell-signal{border-left:3px solid var(--red)}
+.rc-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.rc-rank{font-size:.75rem;color:var(--muted)}
+.rc-ticker{font-size:1rem;font-weight:700}
+.rc-name{font-size:.8rem;color:var(--muted);margin-bottom:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rc-score{font-size:1.4rem;font-weight:800;color:var(--accent2)}
+.rc-score.sell{color:var(--red)}
+.rc-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip{font-size:.75rem;padding:3px 9px;border-radius:20px;background:var(--bg3);color:var(--text);white-space:nowrap}
+.chip.green{background:#052e16;color:#bbf7d0}
+.chip.red{background:#450a0a;color:#fecaca}
+.chip.pinned{background:#052e16;color:#bbf7d0}
+.sell-banner{background:#450a0a;color:#fecaca;border-radius:8px;padding:8px 10px;font-size:.78rem;margin-bottom:8px;display:flex;align-items:flex-start;gap:6px}
 
 /* Tabelle desktop */
-@media (min-width: 700px) {
-  .result-card { display: none; }
-  #tbl-wrap { display: block; }
-}
-#tbl-wrap { display: none; overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
-th { background: var(--bg2); padding: 9px 12px; text-align: left;
-  font-size: .75rem; color: var(--muted); font-weight: 600;
-  border-bottom: 1px solid var(--border); cursor: pointer;
-  white-space: nowrap; user-select: none; }
-th:hover { color: var(--accent2); }
-td { padding: 10px 12px; border-bottom: 1px solid var(--border);
-  background: var(--bg2); }
-tr:last-child td { border-bottom: none; }
-.td-score { font-weight: 700; color: var(--accent2); }
-.td-ticker { font-weight: 700; }
+@media (min-width:700px){.result-card{display:none}#tbl-wrap{display:block}}
+#tbl-wrap{display:none;overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+th{background:var(--bg2);padding:9px 12px;text-align:left;font-size:.75rem;color:var(--muted);font-weight:600;border-bottom:1px solid var(--border);cursor:pointer;white-space:nowrap;user-select:none}
+th:hover{color:var(--accent2)}
+td{padding:10px 12px;border-bottom:1px solid var(--border);background:var(--bg2)}
+tr.sell-row td{background:#450a0a}
+tr.sell-row td{color:#fecaca}
+tr.pinned-row td{border-left:3px solid var(--accent2)}
+tr:last-child td{border-bottom:none}
+.td-score{font-weight:700;color:var(--accent2)}
+.td-score.sell{color:#ff453a}
+.td-ticker{font-weight:700}
 
-/* Leerer Zustand */
-#empty { text-align: center; padding: 48px 16px; color: var(--muted); }
-#empty svg { opacity: .3; margin-bottom: 12px; }
+/* Leer */
+#empty{text-align:center;padding:48px 16px;color:var(--muted)}
 
-/* Config-Screen */
-.cfg-section { background: var(--bg2); border-radius: 14px;
-  padding: 14px; margin-bottom: 14px; }
-.cfg-title { font-size: .75rem; font-weight: 700; color: var(--muted);
-  text-transform: uppercase; letter-spacing: .5px; margin-bottom: 12px; }
-.cfg-row { display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 0; border-bottom: 1px solid var(--border); gap: 12px; }
-.cfg-row:last-child { border-bottom: none; }
-.cfg-label { font-size: .9rem; flex: 1; }
-.cfg-input { width: 110px; padding: 6px 10px; border-radius: 8px;
-  border: 1px solid var(--border); background: var(--bg3); color: var(--text);
-  font-size: .9rem; text-align: right; }
-.cfg-toggle { position: relative; width: 44px; height: 26px; flex-shrink: 0; }
-.cfg-toggle input { opacity: 0; width: 0; height: 0; }
-.cfg-slider { position: absolute; inset: 0; background: var(--bg3);
-  border-radius: 26px; transition: background .2s; cursor: pointer; }
-.cfg-slider:before { content: ""; position: absolute; width: 20px; height: 20px;
-  left: 3px; top: 3px; background: #fff; border-radius: 50%;
-  transition: transform .2s; }
-.cfg-toggle input:checked + .cfg-slider { background: var(--accent); }
-.cfg-toggle input:checked + .cfg-slider:before { transform: translateX(18px); }
-.cfg-times { display: flex; gap: 8px; flex-wrap: wrap; }
-.cfg-time-tag { background: var(--bg3); border-radius: 8px;
-  padding: 4px 10px; font-size: .85rem; display: flex; align-items: center; gap: 6px; }
-.cfg-time-del { background: none; border: none; color: var(--red);
-  cursor: pointer; font-size: 1rem; padding: 0 2px; line-height: 1; }
-.cfg-time-add { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
-.cfg-time-add input { flex: 1; padding: 7px 10px; border-radius: 8px;
-  border: 1px solid var(--border); background: var(--bg3); color: var(--text); font-size: .9rem; }
-.btn-add { background: var(--accent); color: #fff; border: none;
-  border-radius: 8px; padding: 7px 14px; font-size: .85rem; font-weight: 600;
-  cursor: pointer; }
-.btn-save { width: 100%; padding: 14px; background: var(--accent); color: #fff;
-  border: none; border-radius: 12px; font-size: 1rem; font-weight: 700;
-  cursor: pointer; margin-top: 8px; min-height: 50px; }
-.btn-save:active { opacity: .8; }
-.save-ok { text-align: center; font-size: .85rem; color: var(--green);
-  margin-top: 8px; display: none; }
+/* Portfolio-Tab */
+.section-title{font-size:.75rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:0 0 10px}
 
-/* Scroll-to-top */
-.back-top { position: fixed;
-  bottom: calc(24px + env(safe-area-inset-bottom)); right: 16px;
-  width: 40px; height: 40px; border-radius: 50%; background: var(--accent);
-  color: #fff; border: none; font-size: 20px; cursor: pointer;
-  box-shadow: 0 2px 10px rgba(0,0,0,.25); display: none;
-  align-items: center; justify-content: center; z-index: 200;
-  transition: opacity .2s; }
-.back-top.vis { display: flex; }
-.back-top:active { opacity: .7; }
+/* Portfolio-Formular */
+.pf-form{background:var(--bg2);border-radius:14px;padding:14px;margin-bottom:16px;position:relative}
+.pf-ac-wrap{position:relative}
+.pf-ac-list{position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1px solid var(--border);border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.15);z-index:50;max-height:200px;overflow-y:auto;display:none}
+.pf-ac-list.show{display:block}
+.pf-ac-item{padding:10px 14px;cursor:pointer;font-size:.9rem;border-bottom:1px solid var(--border)}
+.pf-ac-item:last-child{border-bottom:none}
+.pf-ac-item:hover,.pf-ac-item.active{background:var(--bg3)}
+.pf-ac-ticker{font-weight:700}
+.pf-ac-name{font-size:.78rem;color:var(--muted)}
+.pf-row{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.pf-row:last-child{margin-bottom:0}
+.pf-field{flex:1;min-width:120px}
+.pf-label{font-size:.72rem;color:var(--muted);margin-bottom:3px}
+.pf-input{width:100%;padding:8px 10px;border-radius:9px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:.9rem}
+.pf-input:focus{outline:2px solid var(--accent)}
+.btn-pf-add{width:100%;padding:12px;background:var(--accent);color:#fff;border:none;border-radius:12px;font-size:.95rem;font-weight:700;cursor:pointer;margin-top:10px;min-height:46px}
+.btn-pf-add:active{opacity:.8}
+
+/* Portfolio-Karte */
+.pf-card{background:var(--bg2);border-radius:14px;padding:14px;margin-bottom:10px}
+.pf-card.sell-signal{border-left:3px solid var(--red)}
+.pf-card-hd{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px}
+.pf-card-ticker{font-size:1rem;font-weight:700}
+.pf-card-name{font-size:.78rem;color:var(--muted);margin-bottom:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pf-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.pf-kpi{background:var(--bg3);border-radius:9px;padding:9px 12px}
+.pf-kpi-label{font-size:.7rem;color:var(--muted);margin-bottom:2px}
+.pf-kpi-val{font-size:.95rem;font-weight:700}
+.pf-kpi-val.pos{color:var(--green)}
+.pf-kpi-val.neg{color:var(--red)}
+.pf-sell-banner{background:#450a0a;color:#fecaca;border-radius:8px;padding:8px 10px;font-size:.78rem;margin-bottom:10px}
+.pf-btns{display:flex;gap:8px}
+.btn-reset-signal{flex:1;padding:8px;background:var(--bg3);color:var(--text);border:none;border-radius:9px;font-size:.8rem;cursor:pointer}
+.btn-del{padding:8px 14px;background:var(--red);color:#fff;border:none;border-radius:9px;font-size:.8rem;font-weight:600;cursor:pointer}
+#pf-empty{text-align:center;padding:32px 16px;color:var(--muted);font-size:.9rem}
+
+/* Config */
+.cfg-section{background:var(--bg2);border-radius:14px;padding:14px;margin-bottom:14px}
+.cfg-title{font-size:.75rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px}
+.cfg-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);gap:12px}
+.cfg-row:last-child{border-bottom:none}
+.cfg-label{font-size:.9rem;flex:1}
+.cfg-input{width:110px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:.9rem;text-align:right}
+.cfg-toggle{position:relative;width:44px;height:26px;flex-shrink:0}
+.cfg-toggle input{opacity:0;width:0;height:0}
+.cfg-slider{position:absolute;inset:0;background:var(--bg3);border-radius:26px;transition:background .2s;cursor:pointer}
+.cfg-slider:before{content:"";position:absolute;width:20px;height:20px;left:3px;top:3px;background:#fff;border-radius:50%;transition:transform .2s}
+.cfg-toggle input:checked + .cfg-slider{background:var(--accent)}
+.cfg-toggle input:checked + .cfg-slider:before{transform:translateX(18px)}
+.cfg-times{display:flex;gap:8px;flex-wrap:wrap}
+.cfg-time-tag{background:var(--bg3);border-radius:8px;padding:4px 10px;font-size:.85rem;display:flex;align-items:center;gap:6px}
+.cfg-time-del{background:none;border:none;color:var(--red);cursor:pointer;font-size:1rem;padding:0 2px;line-height:1}
+.cfg-time-add{display:flex;gap:8px;margin-top:10px;align-items:center}
+.cfg-time-add input{flex:1;padding:7px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:.9rem}
+.btn-add{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.85rem;font-weight:600;cursor:pointer}
+.btn-save{width:100%;padding:14px;background:var(--accent);color:#fff;border:none;border-radius:12px;font-size:1rem;font-weight:700;cursor:pointer;margin-top:8px;min-height:50px}
+.btn-save:active{opacity:.8}
+.save-ok{text-align:center;font-size:.85rem;color:var(--green);margin-top:8px;display:none}
+
+/* Scroll-to-Top */
+.back-top{position:fixed;bottom:calc(24px + env(safe-area-inset-bottom));right:16px;width:40px;height:40px;border-radius:50%;background:var(--accent);color:#fff;border:none;font-size:20px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.25);display:none;align-items:center;justify-content:center;z-index:200}
+.back-top.vis{display:flex}
+.back-top:active{opacity:.7}
 
 /* Info-Overlay */
-#info-overlay { display: none; position: fixed; inset: 0; z-index: 300;
-  background: rgba(0,0,0,.4); }
-#info-overlay.show { display: flex; align-items: flex-end; }
-#info-sheet { background: var(--bg2); border-radius: 20px 20px 0 0;
-  width: 100%; max-height: 85vh; display: flex; flex-direction: column;
-  box-shadow: 0 -4px 20px rgba(0,0,0,.15); }
-#info-sheet-hd { padding: 14px 16px 10px; display: flex;
-  justify-content: space-between; align-items: center;
-  border-bottom: 1px solid var(--border); flex-shrink: 0; }
-#info-sheet-hd strong { font-size: 1rem; }
-#btn-info-close { background: var(--bg3); border: none; border-radius: 16px;
-  padding: 5px 14px; font-size: 13px; cursor: pointer; color: var(--text); }
-#info-sheet-body { overflow-y: auto; padding: 16px 16px calc(20px + env(safe-area-inset-bottom));
-  -webkit-overflow-scrolling: touch; font-size: .9rem; line-height: 1.6; }
-.info-row { display: flex; gap: 10px; margin-bottom: 12px; }
-.info-icon { flex-shrink: 0; width: 22px; margin-top: 2px; color: var(--muted); }
+#info-overlay{display:none;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.4)}
+#info-overlay.show{display:flex;align-items:flex-end}
+#info-sheet{background:var(--bg2);border-radius:20px 20px 0 0;width:100%;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 -4px 20px rgba(0,0,0,.15)}
+#info-sheet-hd{padding:14px 16px 10px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);flex-shrink:0}
+#info-sheet-hd strong{font-size:1rem}
+#btn-info-close{background:var(--bg3);border:none;border-radius:16px;padding:5px 14px;font-size:13px;cursor:pointer;color:var(--text)}
+#info-sheet-body{overflow-y:auto;padding:16px 16px calc(20px + env(safe-area-inset-bottom));-webkit-overflow-scrolling:touch;font-size:.9rem;line-height:1.6}
+.info-row{display:flex;gap:10px;margin-bottom:12px}
+.info-icon{flex-shrink:0;width:22px;margin-top:2px;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -226,6 +205,10 @@ tr:last-child td { border-bottom: none; }
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
       Dashboard
     </button>
+    <button class="tab" onclick="switchTab('portfolio')" id="tab-portfolio">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+      Portfolio
+    </button>
     <button class="tab" onclick="switchTab('config')" id="tab-config">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
       Einstellungen
@@ -237,6 +220,14 @@ tr:last-child td { border-bottom: none; }
 
   <!-- Dashboard -->
   <div class="screen active" id="screen-dashboard">
+    <div id="progress-bar">
+      <div class="pb-top">
+        <span class="pb-label" id="pb-label">Scan läuft…</span>
+        <span class="pb-pct" id="pb-pct">0%</span>
+      </div>
+      <div class="pb-track"><div class="pb-fill" id="pb-fill"></div></div>
+      <div class="pb-ticker" id="pb-ticker"></div>
+    </div>
     <div id="status-bar">
       <div class="status-info" id="status-text">Lade Daten…</div>
       <button id="btn-scan" onclick="triggerScan()">
@@ -247,25 +238,60 @@ tr:last-child td { border-bottom: none; }
     <div id="results-container"></div>
     <div id="tbl-wrap">
       <table id="results-table">
-        <thead>
-          <tr>
-            <th onclick="sortBy('rank')">#</th>
-            <th onclick="sortBy('ticker')">Ticker</th>
-            <th onclick="sortBy('name')">Name</th>
-            <th onclick="sortBy('score')">Score ↕</th>
-            <th onclick="sortBy('bullish_pct')">Bullish%</th>
-            <th onclick="sortBy('buzz')">Buzz</th>
-            <th onclick="sortBy('market_cap')">MarketCap</th>
-            <th onclick="sortBy('articles_week')">News</th>
-          </tr>
-        </thead>
+        <thead><tr>
+          <th onclick="sortBy('rank')">#</th>
+          <th onclick="sortBy('ticker')">Ticker</th>
+          <th onclick="sortBy('name')">Name</th>
+          <th onclick="sortBy('score')">Score ↕</th>
+          <th onclick="sortBy('bullish_pct')">Bullish%</th>
+          <th onclick="sortBy('buzz')">Buzz</th>
+          <th onclick="sortBy('market_cap')">MktCap</th>
+          <th onclick="sortBy('articles_week')">News</th>
+        </tr></thead>
         <tbody id="tbl-body"></tbody>
       </table>
     </div>
     <div id="empty" style="display:none">
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h18v18H3z"/><path d="M9 9h6M9 12h6M9 15h4"/></svg>
       <p>Noch kein Scan-Ergebnis.<br>Klick auf „Scan jetzt" zum Starten.</p>
     </div>
+  </div>
+
+  <!-- Portfolio -->
+  <div class="screen" id="screen-portfolio">
+    <div class="pf-form">
+      <div class="section-title">Aktie hinzufügen</div>
+      <div class="pf-row">
+        <div class="pf-field">
+          <div class="pf-label">Ticker</div>
+          <div class="pf-ac-wrap">
+            <input class="pf-input" id="pf-ticker" placeholder="z.B. ACMR" autocomplete="off"
+              oninput="acQuery(this.value)" onkeydown="acKey(event)">
+            <div class="pf-ac-list" id="pf-ac-list"></div>
+          </div>
+        </div>
+        <div class="pf-field">
+          <div class="pf-label">Name</div>
+          <input class="pf-input" id="pf-name" placeholder="Firmenname">
+        </div>
+      </div>
+      <div class="pf-row">
+        <div class="pf-field">
+          <div class="pf-label">Anzahl Aktien</div>
+          <input class="pf-input" id="pf-shares" type="number" min="0" step="1" placeholder="100">
+        </div>
+        <div class="pf-field">
+          <div class="pf-label">Einstandskurs ($)</div>
+          <input class="pf-input" id="pf-price" type="number" min="0" step="0.01" placeholder="12.50">
+        </div>
+        <div class="pf-field">
+          <div class="pf-label">Kaufdatum</div>
+          <input class="pf-input" id="pf-date" type="date">
+        </div>
+      </div>
+      <button class="btn-pf-add" onclick="addToPortfolio()">+ Hinzufügen</button>
+    </div>
+    <div id="pf-list"></div>
+    <div id="pf-empty" style="display:none">Noch keine Aktien im Portfolio.</div>
   </div>
 
   <!-- Einstellungen -->
@@ -278,7 +304,6 @@ tr:last-child td { border-bottom: none; }
         <button class="btn-add" onclick="addTime()">+ Hinzufügen</button>
       </div>
     </div>
-
     <div class="cfg-section">
       <div class="cfg-title">Filter</div>
       <div class="cfg-row">
@@ -313,7 +338,6 @@ tr:last-child td { border-bottom: none; }
         <input class="cfg-input" type="number" id="cfg-top-n" min="10" max="200">
       </div>
     </div>
-
     <button class="btn-save" onclick="saveConfig()">Speichern</button>
     <div class="save-ok" id="save-ok">✓ Gespeichert</div>
   </div>
@@ -331,34 +355,26 @@ tr:last-child td { border-bottom: none; }
     </div>
     <div id="info-sheet-body">
       <div class="info-row">
-        <span class="info-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg></span>
-        <span>Scannt Russell 2000 Small Caps täglich zweimal auf steigendes News-Sentiment via Finnhub Free API.</span>
+        <span class="info-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg></span>
+        <span>Scannt NYSE + NASDAQ Small Caps täglich zweimal auf steigendes News-Sentiment via Finnhub Free API.</span>
       </div>
       <div class="info-row">
-        <span class="info-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span>
-        <span><b>Score-Formel:</b> 45 % Bullish-Sentiment + 30 % Buzz + 25 % NLP-Score. Optional: KGV-Bonus wenn 0 &lt; KGV &lt; 30.</span>
+        <span class="info-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg></span>
+        <span><b>Portfolio:</b> Aktien werden stündlich (9:30–22:30 UTC, Mo–Fr) auf Sentiment-Wechsel geprüft. Bei gedrehter Stimmung: Telegram-Alert + rote Markierung.</span>
       </div>
       <div class="info-row">
-        <span class="info-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
-        <span>Kein Investment-Advice. Die Ergebnisse basieren auf öffentlichen News-Sentiment-Daten und sind keine Kauf- oder Verkaufsempfehlung.</span>
+        <span class="info-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span>
+        <span><b>Score:</b> 45 % Bullish + 30 % Buzz + 25 % NLP-Score. KGV-Bonus wenn 0 &lt; KGV &lt; 30.</span>
       </div>
       <div class="info-row">
-        <span class="info-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
-        <span>Datenquelle: <b>Finnhub.io</b> (Free Tier, 60 Calls/Min). Ein Scan dauert ca. 30–40 Minuten.</span>
+        <span class="info-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
+        <span>Kein Investment-Advice. Nur Sentiment-Daten. Keine Kauf- oder Verkaufsempfehlung.</span>
       </div>
     </div>
   </div>
 </div>
 
 <script>
-// ── Icons ─────────────────────────────────────────────────────────────────
-const ICON_PATHS = {
-  refresh: '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
-};
-function icon(name, size = 14) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[name] || ''}</svg>`;
-}
-
 // ── Pull-to-Refresh ───────────────────────────────────────────────────────
 const ptrEl = document.getElementById('ptr');
 let ptrStartY = 0, ptrActive = false;
@@ -371,10 +387,15 @@ document.addEventListener('touchmove', e => {
 }, { passive: true });
 document.addEventListener('touchend', e => {
   if (!ptrActive) return;
-  if (e.changedTouches[0].clientY - ptrStartY > 80) loadResults();
+  if (e.changedTouches[0].clientY - ptrStartY > 80) refreshCurrent();
   ptrEl.classList.remove('show');
   ptrActive = false;
 }, { passive: true });
+function refreshCurrent() {
+  const tab = document.querySelector('.tab.active')?.id?.replace('tab-', '');
+  if (tab === 'dashboard') loadResults();
+  else if (tab === 'portfolio') loadPortfolio();
+}
 
 // ── Scroll-to-Top ─────────────────────────────────────────────────────────
 window.addEventListener('scroll', () => {
@@ -388,12 +409,45 @@ function switchTab(name) {
   document.getElementById('screen-' + name).classList.add('active');
   document.getElementById('tab-' + name).classList.add('active');
   if (name === 'config') loadConfig();
+  if (name === 'portfolio') loadPortfolio();
+  if (name === 'dashboard') loadResults();
+}
+
+// ── Scan-Status-Polling ───────────────────────────────────────────────────
+let _statusInterval = null;
+
+async function pollScanStatus() {
+  try {
+    const r = await fetch('/sentiment/api/scan/status');
+    const s = await r.json();
+    const pb = document.getElementById('progress-bar');
+    if (s.running) {
+      pb.classList.add('show');
+      const pct = s.total > 0 ? Math.round(s.progress / s.total * 100) : 0;
+      document.getElementById('pb-pct').textContent = pct + '%';
+      document.getElementById('pb-fill').style.width = pct + '%';
+      const typeLabel = s.type === 'portfolio' ? 'Portfolio-Scan' : 'Vollständiger Scan';
+      document.getElementById('pb-label').textContent = typeLabel + ' läuft…';
+      document.getElementById('pb-ticker').textContent = s.current_ticker ? '→ ' + s.current_ticker : '';
+    } else {
+      pb.classList.remove('show');
+      if (_statusInterval) {
+        clearInterval(_statusInterval);
+        _statusInterval = null;
+        loadResults();
+        loadPortfolio();
+      }
+    }
+  } catch (e) {}
+}
+
+function startPolling() {
+  if (_statusInterval) return;
+  _statusInterval = setInterval(pollScanStatus, 3000);
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────────────
-let _results = [];
-let _sortKey = 'score';
-let _sortAsc = false;
+let _results = [], _sortKey = 'score', _sortAsc = false;
 
 async function loadResults() {
   try {
@@ -404,14 +458,12 @@ async function loadResults() {
     const at = d.scanned_at ? new Date(d.scanned_at) : null;
     const sub = at
       ? `${_results.length} Treffer · ${at.toLocaleString('de-AT', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}`
-      : 'Russell 2000 Small Caps';
+      : 'NYSE + NASDAQ Small Caps';
     document.getElementById('hd-sub').textContent = sub;
     document.getElementById('status-text').innerHTML =
       `<b>${d.scanned_count || '–'}</b> gescannt · <b>${d.results_count || _results.length}</b> Treffer`;
     renderResults();
-  } catch (e) {
-    showEmpty();
-  }
+  } catch { showEmpty(); }
 }
 
 function renderResults() {
@@ -420,40 +472,42 @@ function renderResults() {
 
   const sorted = [..._results].sort((a, b) => {
     let av = a[_sortKey] ?? -1, bv = b[_sortKey] ?? -1;
-    if (typeof av === 'string') av = av.toLowerCase(), bv = (bv || '').toLowerCase();
+    if (typeof av === 'string') { av = av.toLowerCase(); bv = (bv || '').toLowerCase(); }
     return _sortAsc ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
   });
 
-  // Mobile cards
   const container = document.getElementById('results-container');
   container.innerHTML = sorted.map((r, i) => {
-    const mc = r.market_cap ? `$${Math.round(r.market_cap / 1e6)}M` : '–';
-    const pe = r.pe ? `KGV ${r.pe.toFixed(1)}` : '';
-    return `<div class="result-card">
+    const mc = r.market_cap ? `$${Math.round(r.market_cap/1e6)}M` : '–';
+    const sell = r.sell_signal;
+    const pinned = r.pinned;
+    return `<div class="result-card${sell?' sell-signal':pinned?' pinned':''}">
+      ${sell ? `<div class="sell-banner">🔴 Verkaufsempfehlung: ${r.sell_reason || 'Sentiment gedreht'}</div>` : ''}
       <div class="rc-header">
-        <span class="rc-rank">#${i + 1}</span>
+        <span class="rc-rank">#${i+1}${pinned?' 📌':''}</span>
         <span class="rc-ticker">${r.ticker}</span>
-        <span class="rc-score">${r.score}</span>
+        <span class="rc-score${sell?' sell':''}">${r.score}</span>
       </div>
-      <div class="rc-name">${r.name || '–'}</div>
+      <div class="rc-name">${r.name||'–'}</div>
       <div class="rc-chips">
-        <span class="chip green">↑ Bullish ${r.bullish_pct}%</span>
+        <span class="chip${sell?' red':' green'}">↑ Bullish ${r.bullish_pct}%</span>
         <span class="chip">Buzz ${r.buzz.toFixed(2)}</span>
         <span class="chip">${r.articles_week} News</span>
         <span class="chip">${mc}</span>
-        ${pe ? `<span class="chip">${pe}</span>` : ''}
+        ${pinned ? '<span class="chip pinned">Portfolio</span>' : ''}
       </div>
     </div>`;
   }).join('');
 
-  // Desktop table
   document.getElementById('tbl-body').innerHTML = sorted.map((r, i) => {
-    const mc = r.market_cap ? `$${Math.round(r.market_cap / 1e6)}M` : '–';
-    return `<tr>
-      <td>${i + 1}</td>
+    const mc = r.market_cap ? `$${Math.round(r.market_cap/1e6)}M` : '–';
+    const sell = r.sell_signal, pinned = r.pinned;
+    const rowCls = sell ? 'sell-row' : pinned ? 'pinned-row' : '';
+    return `<tr class="${rowCls}">
+      <td>${i+1}${pinned?' 📌':''}</td>
       <td class="td-ticker">${r.ticker}</td>
-      <td>${r.name || '–'}</td>
-      <td class="td-score">${r.score}</td>
+      <td>${r.name||'–'}</td>
+      <td class="td-score${sell?' sell':''}">${r.score}</td>
       <td>${r.bullish_pct}%</td>
       <td>${r.buzz.toFixed(2)}</td>
       <td>${mc}</td>
@@ -474,20 +528,180 @@ function showEmpty() {
   document.getElementById('empty').style.display = 'block';
 }
 
-// ── Scan auslösen ─────────────────────────────────────────────────────────
 async function triggerScan() {
   const btn = document.getElementById('btn-scan');
   btn.disabled = true;
-  btn.innerHTML = `${icon('refresh')} Läuft…`;
-  document.getElementById('status-text').innerHTML = '<b>Scan gestartet</b> – dauert ca. 30–40 Min.';
+  btn.textContent = 'Läuft…';
   try {
-    await fetch('/sentiment/api/scan', { method: 'POST' });
+    const r = await fetch('/sentiment/api/scan', { method: 'POST' });
+    if (r.status === 409) {
+      btn.textContent = 'Läuft bereits';
+    } else {
+      document.getElementById('status-text').innerHTML = '<b>Scan gestartet</b> – dauert ca. 30–90 Min.';
+      startPolling();
+    }
   } finally {
-    setTimeout(() => {
-      btn.disabled = false;
-      btn.innerHTML = `${icon('refresh')} Scan jetzt`;
-    }, 10000);
+    setTimeout(() => { btn.disabled = false; btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Scan jetzt`; }, 8000);
   }
+}
+
+// ── Portfolio ─────────────────────────────────────────────────────────────
+let _acResults = [], _acIdx = -1;
+
+async function acQuery(q) {
+  const list = document.getElementById('pf-ac-list');
+  if (q.length < 1) { list.classList.remove('show'); return; }
+  const r = await fetch(`/sentiment/api/tickers?q=${encodeURIComponent(q)}`);
+  _acResults = await r.json();
+  _acIdx = -1;
+  if (!_acResults.length) { list.classList.remove('show'); return; }
+  list.innerHTML = _acResults.map((t, i) =>
+    `<div class="pf-ac-item" data-i="${i}" onclick="acSelect(${i})">
+      <div class="pf-ac-ticker">${t.ticker}</div>
+      <div class="pf-ac-name">${t.name}</div>
+    </div>`
+  ).join('');
+  list.classList.add('show');
+}
+
+function acSelect(i) {
+  const t = _acResults[i];
+  document.getElementById('pf-ticker').value = t.ticker;
+  document.getElementById('pf-name').value = t.name;
+  document.getElementById('pf-ac-list').classList.remove('show');
+}
+
+function acKey(e) {
+  const list = document.getElementById('pf-ac-list');
+  const items = list.querySelectorAll('.pf-ac-item');
+  if (e.key === 'ArrowDown') {
+    _acIdx = Math.min(_acIdx + 1, items.length - 1);
+  } else if (e.key === 'ArrowUp') {
+    _acIdx = Math.max(_acIdx - 1, -1);
+  } else if (e.key === 'Enter' && _acIdx >= 0) {
+    e.preventDefault(); acSelect(_acIdx); return;
+  } else if (e.key === 'Escape') {
+    list.classList.remove('show'); return;
+  } else { return; }
+  items.forEach((el, i) => el.classList.toggle('active', i === _acIdx));
+}
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('.pf-ac-wrap')) {
+    document.getElementById('pf-ac-list').classList.remove('show');
+  }
+});
+
+async function addToPortfolio() {
+  const ticker = document.getElementById('pf-ticker').value.trim().toUpperCase();
+  const name = document.getElementById('pf-name').value.trim();
+  const shares = parseFloat(document.getElementById('pf-shares').value);
+  const buy_price = parseFloat(document.getElementById('pf-price').value);
+  const buy_date = document.getElementById('pf-date').value;
+
+  if (!ticker || !shares || !buy_price) {
+    alert('Ticker, Anzahl und Einstandskurs sind Pflichtfelder.');
+    return;
+  }
+
+  const r = await fetch('/sentiment/api/portfolio', {
+    method: 'POST',
+    body: JSON.stringify({ ticker, name, shares, buy_price, buy_date }),
+  });
+  if (r.status === 409) { alert('Ticker bereits im Portfolio.'); return; }
+  if (!r.ok) { alert('Fehler beim Hinzufügen.'); return; }
+
+  document.getElementById('pf-ticker').value = '';
+  document.getElementById('pf-name').value = '';
+  document.getElementById('pf-shares').value = '';
+  document.getElementById('pf-price').value = '';
+  document.getElementById('pf-date').value = '';
+
+  loadPortfolio();
+  startPolling(); // zeigt Portfolio-Scan-Fortschritt
+}
+
+async function loadPortfolio() {
+  const r = await fetch('/sentiment/api/portfolio');
+  const portfolio = await r.json();
+  const list = document.getElementById('pf-list');
+  const empty = document.getElementById('pf-empty');
+
+  if (!portfolio.length) {
+    list.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  list.innerHTML = portfolio.map(p => {
+    const sell = p.sell_signal;
+    const price = p.current_price;
+    const pnl = p.pnl;
+    const pnlPct = p.pnl_pct;
+    const cost = (p.buy_price * p.shares).toFixed(2);
+    const val = p.current_value != null ? `$${p.current_value.toFixed(2)}` : '–';
+    const pnlStr = pnl != null ? `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}` : '–';
+    const pnlPctStr = pnlPct != null ? `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%` : '–';
+    const posNeg = pnl != null ? (pnl >= 0 ? 'pos' : 'neg') : '';
+    const sentAt = p.last_sentiment?.scanned_at
+      ? new Date(p.last_sentiment.scanned_at).toLocaleString('de-AT', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
+      : '–';
+
+    return `<div class="pf-card${sell?' sell-signal':''}">
+      ${sell ? `<div class="pf-sell-banner">🔴 <b>Verkaufsempfehlung:</b> ${p.sell_reason || 'Stimmung gedreht'}</div>` : ''}
+      <div class="pf-card-hd">
+        <div>
+          <div class="pf-card-ticker">${p.ticker}</div>
+          <div class="pf-card-name">${p.name || '–'}</div>
+        </div>
+        <div style="font-size:.75rem;color:var(--muted);text-align:right">
+          ${p.shares} Aktien<br>Stand: ${sentAt}
+        </div>
+      </div>
+      <div class="pf-grid">
+        <div class="pf-kpi">
+          <div class="pf-kpi-label">Einstand</div>
+          <div class="pf-kpi-val">$${p.buy_price.toFixed(2)}</div>
+        </div>
+        <div class="pf-kpi">
+          <div class="pf-kpi-label">Aktuell</div>
+          <div class="pf-kpi-val">${price ? '$' + price.toFixed(2) : '–'}</div>
+        </div>
+        <div class="pf-kpi">
+          <div class="pf-kpi-label">Positionswert</div>
+          <div class="pf-kpi-val">${val}</div>
+        </div>
+        <div class="pf-kpi">
+          <div class="pf-kpi-label">P&amp;L</div>
+          <div class="pf-kpi-val ${posNeg}">${pnlStr} <span style="font-size:.8rem">(${pnlPctStr})</span></div>
+        </div>
+      </div>
+      ${p.last_sentiment ? `<div class="rc-chips">
+        <span class="chip${sell?' red':' green'}">Bullish ${p.last_sentiment.bullish_pct}%</span>
+        <span class="chip">Bearish ${p.last_sentiment.bearish_pct}%</span>
+        <span class="chip">Buzz ${p.last_sentiment.buzz?.toFixed(2)||'–'}</span>
+      </div>` : ''}
+      <div class="pf-btns" style="margin-top:10px">
+        ${sell ? `<button class="btn-reset-signal" onclick="resetSignal('${p.ticker}')">Signal zurücksetzen</button>` : '<div style="flex:1"></div>'}
+        <button class="btn-del" onclick="deleteFromPortfolio('${p.ticker}')">Löschen</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function deleteFromPortfolio(ticker) {
+  if (!confirm(`${ticker} wirklich aus dem Portfolio entfernen?`)) return;
+  await fetch(`/sentiment/api/portfolio/${ticker}`, { method: 'DELETE' });
+  loadPortfolio();
+}
+
+async function resetSignal(ticker) {
+  await fetch(`/sentiment/api/portfolio/${ticker}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ sell_signal: false }),
+  });
+  loadPortfolio();
 }
 
 // ── Config ────────────────────────────────────────────────────────────────
@@ -524,10 +738,7 @@ function addTime() {
   document.getElementById('new-time').value = '';
 }
 
-function removeTime(i) {
-  _scanTimes.splice(i, 1);
-  renderTimes();
-}
+function removeTime(i) { _scanTimes.splice(i, 1); renderTimes(); }
 
 async function saveConfig() {
   const cfg = {
@@ -550,6 +761,10 @@ async function saveConfig() {
 
 // ── Init ──────────────────────────────────────────────────────────────────
 loadResults();
+// Sofort Status prüfen (könnte Scan von vorhin noch laufen)
+pollScanStatus().then(() => {
+  if (document.getElementById('progress-bar').classList.contains('show')) startPolling();
+});
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sentiment/sw.js', { scope: '/sentiment/' })

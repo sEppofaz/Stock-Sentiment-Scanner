@@ -16,6 +16,17 @@ CALLS_PER_MIN = 55
 
 _call_times: list[float] = []
 
+# ── Scan-Status (thread-safe via GIL für einfache dict-Ops) ──────────────────
+SCAN_STATUS: dict = {
+    "running": False,
+    "type": None,        # "full" | "portfolio"
+    "started_at": None,
+    "progress": 0,
+    "total": 0,
+    "current_ticker": "",
+    "finished_at": None,
+}
+
 
 def _throttle():
     now = time.time()
@@ -48,8 +59,24 @@ def _load_tickers() -> list[dict]:
     return rows
 
 
+def _load_portfolio() -> list[dict]:
+    path = BASE_DIR / "portfolio.json"
+    if not path.exists():
+        return []
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return []
+
+
+def _save_portfolio(data: list[dict]):
+    path = BASE_DIR / "portfolio.json"
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    tmp.rename(path)
+
+
 def _calc_score(d: dict) -> float:
-    # buzz ist ein Ratio (>1 = über Jahresdurchschnitt); clamp auf 0-100
     buzz_norm = min(d.get("buzz", 0) * 33.3, 100)
     base = (
         0.45 * d.get("bullish_pct", 0)
@@ -62,58 +89,120 @@ def _calc_score(d: dict) -> float:
     return round(min(base, 100), 2)
 
 
+def _fetch_sentiment(ticker: str) -> dict | None:
+    """news-sentiment + quote für einen Ticker. Gibt None bei Fehler."""
+    try:
+        d = _fh_get("/news-sentiment", {"symbol": ticker})
+        buzz_obj = d.get("buzz") or {}
+        sent_obj = d.get("sentiment") or {}
+        return {
+            "buzz": round(buzz_obj.get("buzz", 0) or 0, 3),
+            "articles_week": buzz_obj.get("articlesInLastWeek", 0) or 0,
+            "bullish_pct": round((sent_obj.get("bullishPercent") or 0) * 100, 1),
+            "bearish_pct": round((sent_obj.get("bearishPercent") or 0) * 100, 1),
+            "sentiment_norm": round((d.get("companyNewsScore") or 0) * 100, 1),
+        }
+    except Exception as e:
+        log.debug("%s sentiment: %s", ticker, e)
+        return None
+
+
+def _fetch_quote(ticker: str) -> float | None:
+    """Aktueller Kurs via /quote."""
+    try:
+        d = _fh_get("/quote", {"symbol": ticker})
+        return d.get("c") or None
+    except Exception:
+        return None
+
+
+def _check_sell_signal(entry: dict, curr: dict) -> tuple[bool, str | None]:
+    """Gibt (sell_signal, reason) zurück. True nur wenn Stimmung JETZT gedreht ist."""
+    prev = entry.get("last_sentiment")
+    if not prev:
+        return False, None  # Erstmalig gescannt → kein Signal
+
+    prev_bullish = prev.get("bullish_pct", 0)
+    prev_bearish = prev.get("bearish_pct", 0)
+    prev_buzz = prev.get("buzz", 0)
+
+    curr_bullish = curr.get("bullish_pct", 0)
+    curr_bearish = curr.get("bearish_pct", 0)
+    curr_buzz = curr.get("buzz", 0)
+
+    # War bullish, jetzt nicht mehr (5-Punkte-Puffer)
+    if prev_bullish >= 40 and curr_bullish < 35:
+        return True, f"Bullish-Sentiment gefallen ({prev_bullish:.0f}% → {curr_bullish:.0f}%)"
+
+    # Bearish-Stimmung gestiegen
+    if prev_bearish <= 30 and curr_bearish > 40:
+        return True, f"Bearish-Stimmung gestiegen ({prev_bearish:.0f}% → {curr_bearish:.0f}%)"
+
+    # Buzz eingebrochen (war rising, jetzt fallend)
+    if prev_buzz > 1.0 and curr_buzz < 0.7:
+        return True, f"Buzz eingebrochen ({prev_buzz:.2f} → {curr_buzz:.2f})"
+
+    return False, None
+
+
+# ── Voller Scan (alle Ticker) ─────────────────────────────────────────────────
+
 def run_scan(cfg: dict) -> dict:
+    global SCAN_STATUS
+    SCAN_STATUS.update({
+        "running": True, "type": "full",
+        "started_at": datetime.utcnow().isoformat() + "Z",
+        "progress": 0, "total": 0,
+        "current_ticker": "", "finished_at": None,
+    })
+
     f = cfg["filter"]
     tickers = _load_tickers()
-    log.info("Scan gestartet: %d Ticker", len(tickers))
+    portfolio = _load_portfolio()
+    portfolio_tickers = {p["ticker"] for p in portfolio}
 
-    # Stufe 1: news-sentiment → Buzz + Bullish + News-Volumen
+    log.info("Vollständiger Scan gestartet: %d Ticker", len(tickers))
+    SCAN_STATUS["total"] = len(tickers)
+
+    # Stufe 1: news-sentiment → Sentiment-Filter
     candidates: list[dict] = []
+    all_scanned: dict[str, dict] = {}  # ticker → sentiment (auch verworfene)
     errors = 0
 
-    for t in tickers:
-        try:
-            d = _fh_get("/news-sentiment", {"symbol": t["ticker"]})
-            buzz_obj = d.get("buzz") or {}
-            sent_obj = d.get("sentiment") or {}
+    for i, t in enumerate(tickers):
+        SCAN_STATUS["progress"] = i + 1
+        SCAN_STATUS["current_ticker"] = t["ticker"]
 
-            buzz_val = buzz_obj.get("buzz", 0) or 0
-            articles = buzz_obj.get("articlesInLastWeek", 0) or 0
-            bullish = (sent_obj.get("bullishPercent") or 0) * 100
-            bearish = (sent_obj.get("bearishPercent") or 0) * 100
-            news_score = (d.get("companyNewsScore") or 0) * 100
-
-            if f.get("buzz_trend_rising") and buzz_val <= 1.0:
-                continue
-            if bullish < f["bullish_pct_min"]:
-                continue
-            if bearish > f["bearish_pct_max"]:
-                continue
-            if articles < f["news_min_count"]:
-                continue
-
-            candidates.append({
-                "ticker": t["ticker"],
-                "name": t["name"],
-                "buzz": round(buzz_val, 3),
-                "bullish_pct": round(bullish, 1),
-                "bearish_pct": round(bearish, 1),
-                "articles_week": articles,
-                "sentiment_norm": round(news_score, 1),
-            })
-        except Exception as e:
+        sent = _fetch_sentiment(t["ticker"])
+        if sent is None:
             errors += 1
-            log.debug("%s: %s", t["ticker"], e)
+            continue
+
+        all_scanned[t["ticker"]] = {**t, **sent}
+
+        # Filter anwenden
+        buzz_val = sent["buzz"]
+        if f.get("buzz_trend_rising") and buzz_val <= 1.0:
+            continue
+        if sent["bullish_pct"] < f["bullish_pct_min"]:
+            continue
+        if sent["bearish_pct"] > f["bearish_pct_max"]:
+            continue
+        if sent["articles_week"] < f["news_min_count"]:
+            continue
+
+        candidates.append({**t, **sent})
 
     log.info("Sentiment-Filter: %d Kandidaten", len(candidates))
 
-    # Stufe 2: stock/metric → MarketCap-Filter (nur für Kandidaten)
+    # Stufe 2: MarketCap-Filter (nur für Kandidaten)
     valid: list[dict] = []
     for c in candidates:
+        SCAN_STATUS["current_ticker"] = c["ticker"]
         try:
             m = _fh_get("/stock/metric", {"symbol": c["ticker"], "metric": "all"})
             metrics = m.get("metric") or {}
-            mc_m = metrics.get("marketCapitalization")  # Finnhub: Millionen USD
+            mc_m = metrics.get("marketCapitalization")
             pe = metrics.get("peNormalizedAnnual")
 
             if mc_m is not None:
@@ -122,7 +211,7 @@ def run_scan(cfg: dict) -> dict:
                     continue
                 c["market_cap"] = int(mc_usd)
             else:
-                c["market_cap"] = None  # unbekannt → nicht ausschließen
+                c["market_cap"] = None
 
             c["pe"] = pe
             valid.append(c)
@@ -136,7 +225,37 @@ def run_scan(cfg: dict) -> dict:
         v["score"] = _calc_score(v)
 
     valid.sort(key=lambda x: x["score"], reverse=True)
-    top50 = valid[: cfg.get("top_n_results", 50)]
+    top_n = valid[: cfg.get("top_n_results", 50)]
+    top_tickers = {r["ticker"] for r in top_n}
+
+    # Portfolio-Aktien immer in Top N aufnehmen (pinned)
+    for pt in portfolio_tickers:
+        if pt in top_tickers:
+            # Schon drin → als pinned markieren
+            for r in top_n:
+                if r["ticker"] == pt:
+                    r["pinned"] = True
+        else:
+            # Nicht in Top N → forcieren, Daten aus all_scanned oder neu holen
+            base = all_scanned.get(pt)
+            if base is None:
+                sent = _fetch_sentiment(pt)
+                if sent:
+                    pname = next((p["name"] for p in portfolio if p["ticker"] == pt), pt)
+                    base = {"ticker": pt, "name": pname, **sent}
+            if base:
+                try:
+                    m = _fh_get("/stock/metric", {"symbol": pt, "metric": "all"})
+                    metrics = m.get("metric") or {}
+                    mc_m = metrics.get("marketCapitalization")
+                    base["market_cap"] = int(mc_m * 1_000_000) if mc_m else None
+                    base["pe"] = metrics.get("peNormalizedAnnual")
+                except Exception:
+                    base["market_cap"] = None
+                    base["pe"] = None
+                base["score"] = _calc_score(base)
+                base["pinned"] = True
+                top_n.append(base)
 
     output = {
         "scanned_at": datetime.utcnow().isoformat() + "Z",
@@ -144,14 +263,114 @@ def run_scan(cfg: dict) -> dict:
         "candidates_count": len(candidates),
         "results_count": len(valid),
         "errors": errors,
-        "results": top50,
+        "results": top_n,
     }
     _write_results(output)
-    log.info("Scan fertig – Top %d gespeichert", len(top50))
 
-    _send_telegram(top50[:5], len(tickers))
+    # Portfolio-Quote und Wert aktualisieren
+    _update_portfolio_quotes(portfolio)
+
+    log.info("Vollständiger Scan fertig – %d Ergebnisse", len(top_n))
+    _send_telegram_top5(top_n[:5], len(tickers))
+
+    SCAN_STATUS.update({
+        "running": False,
+        "finished_at": datetime.utcnow().isoformat() + "Z",
+        "current_ticker": "",
+    })
     return output
 
+
+# ── Portfolio-Schnell-Scan ────────────────────────────────────────────────────
+
+def run_portfolio_scan() -> None:
+    """Nur Portfolio-Aktien scannen, Alert bei gedrehter Stimmung."""
+    global SCAN_STATUS
+    portfolio = _load_portfolio()
+    if not portfolio:
+        return
+
+    SCAN_STATUS.update({
+        "running": True, "type": "portfolio",
+        "started_at": datetime.utcnow().isoformat() + "Z",
+        "progress": 0, "total": len(portfolio),
+        "current_ticker": "", "finished_at": None,
+    })
+
+    log.info("Portfolio-Scan gestartet: %d Aktien", len(portfolio))
+    changed = False
+
+    for i, entry in enumerate(portfolio):
+        ticker = entry["ticker"]
+        SCAN_STATUS["progress"] = i + 1
+        SCAN_STATUS["current_ticker"] = ticker
+
+        sent = _fetch_sentiment(ticker)
+        price = _fetch_quote(ticker)
+
+        if sent is None:
+            continue
+
+        # Sell-Signal prüfen (nur wenn Signal noch nicht aktiv)
+        if not entry.get("sell_signal"):
+            signal, reason = _check_sell_signal(entry, sent)
+            if signal:
+                entry["sell_signal"] = True
+                entry["sell_reason"] = reason
+                log.info("SELL-SIGNAL %s: %s", ticker, reason)
+                _send_telegram_sell(entry, sent, price, reason)
+                changed = True
+        else:
+            # Signal zurücksetzen wenn Stimmung wieder gut
+            if sent["bullish_pct"] >= 40 and sent["bearish_pct"] <= 30:
+                entry["sell_signal"] = False
+                entry["sell_reason"] = None
+                changed = True
+
+        # last_sentiment aktualisieren
+        entry["last_sentiment"] = {
+            **sent,
+            "price": price,
+            "scanned_at": datetime.utcnow().isoformat() + "Z",
+        }
+        if price:
+            entry["current_price"] = price
+            entry["current_value"] = round(price * entry.get("shares", 0), 2)
+            cost = entry.get("buy_price", 0) * entry.get("shares", 0)
+            entry["pnl"] = round(entry["current_value"] - cost, 2)
+            entry["pnl_pct"] = round((entry["pnl"] / cost * 100) if cost else 0, 2)
+        changed = True
+
+    if changed:
+        _save_portfolio(portfolio)
+
+    SCAN_STATUS.update({
+        "running": False,
+        "finished_at": datetime.utcnow().isoformat() + "Z",
+        "current_ticker": "",
+    })
+    log.info("Portfolio-Scan fertig")
+
+
+def _update_portfolio_quotes(portfolio: list[dict]) -> None:
+    """Kurse und P&L nach vollständigem Scan aktualisieren."""
+    if not portfolio:
+        return
+    changed = False
+    for entry in portfolio:
+        price = _fetch_quote(entry["ticker"])
+        if price:
+            entry["current_price"] = price
+            entry["current_value"] = round(price * entry.get("shares", 0), 2)
+            cost = entry.get("buy_price", 0) * entry.get("shares", 0)
+            entry["pnl"] = round(entry["current_value"] - cost, 2)
+            entry["pnl_pct"] = round((entry["pnl"] / cost * 100) if cost else 0, 2)
+            changed = True
+    if changed:
+        _save_portfolio(portfolio)
+
+
+# ── Datei-Helfer ──────────────────────────────────────────────────────────────
 
 def _write_results(data: dict):
     path = BASE_DIR / "results.json"
@@ -160,18 +379,29 @@ def _write_results(data: dict):
     tmp.rename(path)
 
 
-def _send_telegram(top5: list, scanned: int):
+# ── Telegram ──────────────────────────────────────────────────────────────────
+
+def _tg_post(text: str):
     token = os.environ.get("TOKEN", "")
     chat_id = os.environ.get("CHAT_ID", "")
     if not token or not chat_id:
         log.warning("Telegram: TOKEN oder CHAT_ID fehlt")
         return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            timeout=15,
+        )
+    except Exception as e:
+        log.warning("Telegram-Fehler: %s", e)
 
+
+def _send_telegram_top5(top5: list, scanned: int):
     now = datetime.utcnow().strftime("%H:%M UTC")
     lines = [f"<b>📊 Stock Sentiment Scan — {now}</b>", ""]
     lines.append("🟢 <b>TOP 5 Small Caps (Rising Sentiment)</b>")
     lines.append("")
-
     for i, r in enumerate(top5, 1):
         mc = f"${r['market_cap'] // 1_000_000}M" if r.get("market_cap") else "–"
         lines.append(
@@ -179,21 +409,28 @@ def _send_telegram(top5: list, scanned: int):
             f"   Score: {r['score']} | Bullish: {r['bullish_pct']}% | Buzz: {r['buzz']:.2f}↑\n"
             f"   MarketCap: {mc} | {r['articles_week']} News (7d)"
         )
+    lines += ["", f"ℹ️ {scanned} Ticker gescannt | Finnhub Free API",
+              "⚠️ Kein Investment-Advice. Nur Sentiment-Daten."]
+    _tg_post("\n".join(lines))
 
-    lines.append("")
-    lines.append(f"ℹ️ {scanned} Ticker gescannt | Finnhub Free API")
-    lines.append("⚠️ Kein Investment-Advice. Nur Sentiment-Daten.")
 
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={
-                "chat_id": chat_id,
-                "text": "\n".join(lines),
-                "parse_mode": "HTML",
-            },
-            timeout=15,
-        )
-        log.info("Telegram-Nachricht gesendet")
-    except Exception as e:
-        log.warning("Telegram-Fehler: %s", e)
+def _send_telegram_sell(entry: dict, sent: dict, price: float | None, reason: str):
+    ticker = entry["ticker"]
+    name = entry.get("name", ticker)
+    shares = entry.get("shares", 0)
+    buy_price = entry.get("buy_price", 0)
+    curr_val = f"${price * shares:.2f}" if price else "–"
+    pnl = entry.get("pnl")
+    pnl_str = f"{'+'if pnl >= 0 else ''}{pnl:.2f} USD" if pnl is not None else "–"
+
+    text = (
+        f"🔴 <b>VERKAUFSEMPFEHLUNG: {ticker}</b>\n"
+        f"{name}\n\n"
+        f"<b>Grund:</b> {reason}\n\n"
+        f"Bullish: {sent['bullish_pct']}% | Bearish: {sent['bearish_pct']}% | Buzz: {sent['buzz']:.2f}\n"
+        f"Aktueller Kurs: {'$'+f'{price:.2f}' if price else '–'}\n"
+        f"Positionswert: {curr_val} | P&L: {pnl_str}\n\n"
+        f"⚠️ Kein Investment-Advice. Nur Sentiment-Daten."
+    )
+    _tg_post(text)
+    log.info("Telegram Sell-Alert gesendet: %s", ticker)

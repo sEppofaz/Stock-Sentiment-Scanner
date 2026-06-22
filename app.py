@@ -1,4 +1,5 @@
 import os
+import csv
 import json
 import logging
 import threading
@@ -50,11 +51,32 @@ def _serve_icon(size: int, fname: str):
     return send_file(p, mimetype="image/png")
 
 
-# ── Config + Scheduler ───────────────────────────────────────────────────────
+# ── Config ────────────────────────────────────────────────────────────────────
 
 def _load_cfg() -> dict:
     return json.loads((BASE_DIR / "config.json").read_text())
 
+
+# ── Portfolio ─────────────────────────────────────────────────────────────────
+
+def _load_portfolio() -> list[dict]:
+    path = BASE_DIR / "portfolio.json"
+    if not path.exists():
+        return []
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return []
+
+
+def _save_portfolio(data: list[dict]):
+    path = BASE_DIR / "portfolio.json"
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    tmp.rename(path)
+
+
+# ── Scheduler ─────────────────────────────────────────────────────────────────
 
 scheduler = BackgroundScheduler()
 
@@ -62,22 +84,46 @@ scheduler = BackgroundScheduler()
 def _reschedule():
     cfg = _load_cfg()
     scheduler.remove_all_jobs()
+
+    # Volle Scans (aus config)
     for t in cfg.get("scan_times_utc", []):
         h, m = map(int, t.split(":"))
         scheduler.add_job(
-            _do_scan, "cron",
+            _do_full_scan, "cron",
             hour=h, minute=m, day_of_week="mon-fri",
             id=f"scan_{h:02d}{m:02d}",
         )
-    log.info("Scan-Zeiten: %s (Mo–Fr UTC)", cfg.get("scan_times_utc"))
+
+    # Portfolio-Schnell-Scan: stündlich Mo–Fr 9–22 UTC
+    scheduler.add_job(
+        _do_portfolio_scan, "cron",
+        hour="9-22", minute=30, day_of_week="mon-fri",
+        id="portfolio_scan",
+    )
+
+    log.info(
+        "Scan-Zeiten: %s (Mo–Fr UTC) + Portfolio-Scan stündlich 9:30–22:30 UTC",
+        cfg.get("scan_times_utc"),
+    )
 
 
-def _do_scan():
+def _do_full_scan():
     from scanner import run_scan
     try:
         run_scan(_load_cfg())
     except Exception:
-        log.exception("Scan-Fehler")
+        log.exception("Vollständiger Scan-Fehler")
+
+
+def _do_portfolio_scan():
+    from scanner import run_portfolio_scan, SCAN_STATUS
+    if SCAN_STATUS.get("running"):
+        log.info("Portfolio-Scan übersprungen – voller Scan läuft noch")
+        return
+    try:
+        run_portfolio_scan()
+    except Exception:
+        log.exception("Portfolio-Scan-Fehler")
 
 
 scheduler.start()
@@ -120,7 +166,7 @@ def apple_icon():
     return _serve_icon(180, "apple-touch-icon.png")
 
 
-# ── API ───────────────────────────────────────────────────────────────────────
+# ── API: Scan ─────────────────────────────────────────────────────────────────
 
 @app.route("/sentiment/api/results")
 def api_results():
@@ -130,6 +176,23 @@ def api_results():
     return Response(path.read_text(), mimetype="application/json")
 
 
+@app.route("/sentiment/api/scan", methods=["POST"])
+def api_scan_trigger():
+    from scanner import SCAN_STATUS
+    if SCAN_STATUS.get("running"):
+        return jsonify({"ok": False, "message": "Scan läuft bereits"}), 409
+    threading.Thread(target=_do_full_scan, daemon=True).start()
+    return jsonify({"ok": True, "message": "Scan gestartet"})
+
+
+@app.route("/sentiment/api/scan/status")
+def api_scan_status():
+    from scanner import SCAN_STATUS
+    return jsonify(SCAN_STATUS)
+
+
+# ── API: Config ───────────────────────────────────────────────────────────────
+
 @app.route("/sentiment/api/config", methods=["GET"])
 def api_config_get():
     return jsonify(_load_cfg())
@@ -138,21 +201,116 @@ def api_config_get():
 @app.route("/sentiment/api/config", methods=["POST"])
 def api_config_set():
     cfg = request.get_json(force=True)
-    (BASE_DIR / "config.json").write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
+    (BASE_DIR / "config.json").write_text(
+        json.dumps(cfg, indent=2, ensure_ascii=False)
+    )
     _reschedule()
     return jsonify({"ok": True})
 
 
-@app.route("/sentiment/api/scan", methods=["POST"])
-def api_scan_trigger():
-    threading.Thread(target=_do_scan, daemon=True).start()
-    return jsonify({"ok": True, "message": "Scan gestartet"})
+# ── API: Ticker-Autocomplete ──────────────────────────────────────────────────
+
+@app.route("/sentiment/api/tickers")
+def api_tickers():
+    q = request.args.get("q", "").upper().strip()
+    if len(q) < 1:
+        return jsonify([])
+    results = []
+    try:
+        with open(BASE_DIR / "tickers.csv", newline="", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                ticker = row.get("ticker", "").strip()
+                name = row.get("name", "").strip()
+                if ticker.startswith(q) or q in name.upper():
+                    results.append({"ticker": ticker, "name": name})
+                    if len(results) >= 10:
+                        break
+    except Exception:
+        pass
+    return jsonify(results)
+
+
+# ── API: Portfolio ────────────────────────────────────────────────────────────
+
+@app.route("/sentiment/api/portfolio", methods=["GET"])
+def api_portfolio_get():
+    return jsonify(_load_portfolio())
+
+
+@app.route("/sentiment/api/portfolio", methods=["POST"])
+def api_portfolio_add():
+    body = request.get_json(force=True)
+    ticker = body.get("ticker", "").strip().upper()
+    if not ticker:
+        return jsonify({"error": "ticker fehlt"}), 400
+
+    portfolio = _load_portfolio()
+
+    # Duplikat prüfen
+    if any(p["ticker"] == ticker for p in portfolio):
+        return jsonify({"error": "Ticker bereits im Portfolio"}), 409
+
+    entry = {
+        "ticker": ticker,
+        "name": body.get("name", ""),
+        "shares": float(body.get("shares", 0)),
+        "buy_price": float(body.get("buy_price", 0)),
+        "buy_date": body.get("buy_date", ""),
+        "last_sentiment": None,
+        "current_price": None,
+        "current_value": None,
+        "pnl": None,
+        "pnl_pct": None,
+        "sell_signal": False,
+        "sell_reason": None,
+    }
+    portfolio.append(entry)
+    _save_portfolio(portfolio)
+
+    # Sofort Quote + Sentiment holen (Hintergrundthread)
+    def _init():
+        from scanner import run_portfolio_scan
+        run_portfolio_scan()
+    threading.Thread(target=_init, daemon=True).start()
+
+    return jsonify({"ok": True, "entry": entry}), 201
+
+
+@app.route("/sentiment/api/portfolio/<ticker>", methods=["DELETE"])
+def api_portfolio_delete(ticker: str):
+    ticker = ticker.upper()
+    portfolio = _load_portfolio()
+    before = len(portfolio)
+    portfolio = [p for p in portfolio if p["ticker"] != ticker]
+    if len(portfolio) == before:
+        return jsonify({"error": "Nicht gefunden"}), 404
+    _save_portfolio(portfolio)
+    return jsonify({"ok": True})
+
+
+@app.route("/sentiment/api/portfolio/<ticker>", methods=["PATCH"])
+def api_portfolio_update(ticker: str):
+    """Sell-Signal manuell zurücksetzen."""
+    ticker = ticker.upper()
+    body = request.get_json(force=True)
+    portfolio = _load_portfolio()
+    for p in portfolio:
+        if p["ticker"] == ticker:
+            if "sell_signal" in body:
+                p["sell_signal"] = bool(body["sell_signal"])
+                p["sell_reason"] = None
+            _save_portfolio(portfolio)
+            return jsonify({"ok": True})
+    return jsonify({"error": "Nicht gefunden"}), 404
 
 
 @app.route("/sentiment/api/status")
 def api_status():
     jobs = [
-        {"id": j.id, "next_run": j.next_run_time.isoformat() if j.next_run_time else None}
+        {
+            "id": j.id,
+            "next_run": j.next_run_time.isoformat() if j.next_run_time else None,
+        }
         for j in scheduler.get_jobs()
     ]
     return jsonify({"jobs": jobs})
