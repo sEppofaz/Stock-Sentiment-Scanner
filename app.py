@@ -194,6 +194,15 @@ def api_scan_status():
     return jsonify(SCAN_STATUS)
 
 
+@app.route("/sentiment/api/scan/abort", methods=["POST"])
+def api_scan_abort():
+    from scanner import SCAN_STATUS
+    if SCAN_STATUS.get("running"):
+        SCAN_STATUS["abort"] = True
+        return jsonify({"ok": True, "message": "Abbruch angefordert"})
+    return jsonify({"ok": False, "message": "Kein Scan läuft"})
+
+
 # ── API: Config ───────────────────────────────────────────────────────────────
 
 @app.route("/sentiment/api/config", methods=["GET"])

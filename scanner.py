@@ -19,6 +19,7 @@ _call_times: list[float] = []
 # ── Scan-Status (thread-safe via GIL für einfache dict-Ops) ──────────────────
 SCAN_STATUS: dict = {
     "running": False,
+    "abort": False,
     "type": None,        # "full" | "portfolio"
     "started_at": None,
     "progress": 0,
@@ -26,6 +27,36 @@ SCAN_STATUS: dict = {
     "current_ticker": "",
     "finished_at": None,
 }
+
+# ── Keyword-Sentiment ─────────────────────────────────────────────────────────
+
+BULLISH_WORDS = {
+    "beat", "beats", "record", "surge", "surges", "soar", "soars", "rally",
+    "rallies", "raises", "raised", "upgrade", "upgraded", "upgrades",
+    "outperform", "outperforms", "outperforming", "strong", "exceeds",
+    "exceeded", "growth", "profit", "profits", "gains", "gain", "breakthrough",
+    "launch", "launches", "launched", "partnership", "contract", "acquires",
+    "acquisition", "buyback", "dividend", "positive", "bullish", "momentum",
+    "higher", "increase", "increases", "increased", "expand", "expands",
+    "expansion", "winning", "wins", "win", "success", "successful",
+}
+
+BEARISH_WORDS = {
+    "miss", "misses", "missed", "loss", "losses", "cut", "cuts", "lower",
+    "lowers", "downgrade", "downgraded", "downgrades", "underperform",
+    "underperforms", "weak", "weakness", "lawsuit", "lawsuits",
+    "investigation", "fraud", "bankruptcy", "default", "warning", "warns",
+    "warned", "recall", "decline", "declines", "declined", "disappoints",
+    "disappointed", "disappointing", "layoffs", "layoff", "restructuring",
+    "shortfall", "negative", "bearish", "concern", "concerns", "delay",
+    "delayed", "delays", "falling", "falls", "fell", "drops", "dropped",
+    "slump", "slumps", "slumped", "plunges", "plunged",
+}
+
+
+def _score_text(text: str) -> int:
+    words = set(text.lower().split())
+    return len(words & BULLISH_WORDS) - len(words & BEARISH_WORDS)
 
 
 def _throttle():
@@ -90,20 +121,38 @@ def _calc_score(d: dict) -> float:
 
 
 def _fetch_sentiment(ticker: str) -> dict | None:
-    """news-sentiment + quote für einen Ticker. Gibt None bei Fehler."""
+    """Sentiment via /company-news + Keyword-Scoring. Gibt None bei Fehler."""
+    from datetime import date, timedelta
     try:
-        d = _fh_get("/news-sentiment", {"symbol": ticker})
-        buzz_obj = d.get("buzz") or {}
-        sent_obj = d.get("sentiment") or {}
+        today = date.today().isoformat()
+        week_ago = (date.today() - timedelta(days=7)).isoformat()
+        news = _fh_get("/company-news", {"symbol": ticker, "from": week_ago, "to": today})
+        if not isinstance(news, list):
+            return None
+        count = len(news)
+        if count == 0:
+            return {"buzz": 0.0, "articles_week": 0, "bullish_pct": 0.0,
+                    "bearish_pct": 0.0, "sentiment_norm": 50.0}
+        scores = [
+            _score_text((a.get("headline") or "") + " " + (a.get("summary") or ""))
+            for a in news
+        ]
+        bullish_count = sum(1 for s in scores if s > 0)
+        bearish_count = sum(1 for s in scores if s < 0)
+        avg_score = sum(scores) / count
+        # buzz: Artikel/Woche normiert (3 Artikel = 1.0 = "Durchschnitt")
+        buzz = round(count / 3.0, 3)
+        # sentiment_norm: 0–100 (avg_score ∈ [-3,+3] → linear auf 0–100)
+        sentiment_norm = round(max(0.0, min(100.0, (avg_score + 3) / 6 * 100)), 1)
         return {
-            "buzz": round(buzz_obj.get("buzz", 0) or 0, 3),
-            "articles_week": buzz_obj.get("articlesInLastWeek", 0) or 0,
-            "bullish_pct": round((sent_obj.get("bullishPercent") or 0) * 100, 1),
-            "bearish_pct": round((sent_obj.get("bearishPercent") or 0) * 100, 1),
-            "sentiment_norm": round((d.get("companyNewsScore") or 0) * 100, 1),
+            "buzz": buzz,
+            "articles_week": count,
+            "bullish_pct": round(bullish_count / count * 100, 1),
+            "bearish_pct": round(bearish_count / count * 100, 1),
+            "sentiment_norm": sentiment_norm,
         }
     except Exception as e:
-        log.debug("%s sentiment: %s", ticker, e)
+        log.warning("%s sentiment: %s", ticker, e)
         return None
 
 
@@ -173,6 +222,9 @@ def run_scan(cfg: dict) -> dict:
     errors = 0
 
     for i, t in enumerate(tickers):
+        if SCAN_STATUS.get("abort"):
+            log.info("Scan durch Benutzer abgebrochen bei %d/%d", i, len(tickers))
+            break
         SCAN_STATUS["progress"] = i + 1
         SCAN_STATUS["current_ticker"] = t["ticker"]
 
@@ -278,6 +330,7 @@ def run_scan(cfg: dict) -> dict:
 
     SCAN_STATUS.update({
         "running": False,
+        "abort": False,
         "finished_at": datetime.utcnow().isoformat() + "Z",
         "current_ticker": "",
     })

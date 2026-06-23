@@ -72,6 +72,8 @@ main{padding:16px;padding-left:calc(16px + env(safe-area-inset-left));padding-ri
 #btn-scan{background:var(--accent);color:#fff;border:none;border-radius:9px;padding:7px 14px;font-size:.8rem;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;min-height:34px;transition:opacity .15s}
 #btn-scan:disabled{opacity:.5;cursor:not-allowed}
 #btn-scan:active:not(:disabled){opacity:.8}
+#btn-abort{background:var(--red);color:#fff;border:none;border-radius:9px;padding:5px 12px;font-size:.8rem;font-weight:600;cursor:pointer;margin-top:8px;transition:opacity .15s}
+#btn-abort:active{opacity:.8}
 
 /* Karten */
 .result-card{background:var(--bg2);border-radius:14px;padding:14px;margin-bottom:10px}
@@ -237,6 +239,7 @@ tr:last-child td{border-bottom:none}
       </div>
       <div class="pb-track"><div class="pb-fill" id="pb-fill"></div></div>
       <div class="pb-ticker" id="pb-ticker"></div>
+      <button id="btn-abort" onclick="abortScan()">Scan abbrechen</button>
     </div>
     <div id="status-bar">
       <div class="status-info" id="status-text">Lade Daten…</div>
@@ -522,6 +525,15 @@ async function pollScanStatus() {
 function startPolling() {
   if (_statusInterval) return;
   _statusInterval = setInterval(pollScanStatus, 3000);
+}
+
+async function abortScan() {
+  const btn = document.getElementById('btn-abort');
+  btn.disabled = true;
+  btn.textContent = 'Wird abgebrochen…';
+  try {
+    await fetch('/sentiment/api/scan/abort', { method: 'POST' });
+  } catch(e) {}
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────────────
