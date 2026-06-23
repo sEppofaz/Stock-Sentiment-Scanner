@@ -54,7 +54,11 @@ def _serve_icon(size: int, fname: str):
 # ── Config ────────────────────────────────────────────────────────────────────
 
 def _load_cfg() -> dict:
-    return json.loads((BASE_DIR / "config.json").read_text())
+    path = BASE_DIR / "config.json"
+    if not path.exists():
+        import shutil
+        shutil.copy(BASE_DIR / "config.default.json", path)
+    return json.loads(path.read_text())
 
 
 # ── Portfolio ─────────────────────────────────────────────────────────────────

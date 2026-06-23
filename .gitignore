@@ -8,4 +8,5 @@ icons/
 tickers.csv
 portfolio.json
 claude_costs.json
+config.json
 .env
