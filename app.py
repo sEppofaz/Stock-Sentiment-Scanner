@@ -108,7 +108,10 @@ def _reschedule():
 
 
 def _do_full_scan():
-    from scanner import run_scan
+    from scanner import run_scan, SCAN_STATUS
+    if SCAN_STATUS.get("running"):
+        log.info("Vollständiger Scan übersprungen – Scan läuft bereits")
+        return
     try:
         run_scan(_load_cfg())
     except Exception:

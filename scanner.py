@@ -149,6 +149,9 @@ def _check_sell_signal(entry: dict, curr: dict) -> tuple[bool, str | None]:
 
 def run_scan(cfg: dict) -> dict:
     global SCAN_STATUS
+    if SCAN_STATUS.get("running"):
+        log.warning("run_scan aufgerufen während Scan läuft – abgebrochen")
+        return {}
     SCAN_STATUS.update({
         "running": True, "type": "full",
         "started_at": datetime.utcnow().isoformat() + "Z",
