@@ -316,6 +316,18 @@ def api_portfolio_update(ticker: str):
     return jsonify({"error": "Nicht gefunden"}), 404
 
 
+@app.route("/sentiment/api/costs")
+def api_costs():
+    path = BASE_DIR / "claude_costs.json"
+    if not path.exists():
+        return jsonify({
+            "total_cost_eur": 0.0, "total_cost_usd": 0.0,
+            "total_input_tokens": 0, "total_output_tokens": 0,
+            "last_threshold_notified": 0, "scans": [],
+        })
+    return Response(path.read_text(), mimetype="application/json")
+
+
 @app.route("/sentiment/api/status")
 def api_status():
     jobs = [

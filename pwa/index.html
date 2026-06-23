@@ -173,6 +173,24 @@ tr:last-child td{border-bottom:none}
 .btn-save:active{opacity:.8}
 .save-ok{text-align:center;font-size:.85rem;color:var(--green);margin-top:8px;display:none}
 
+/* Kosten-Tab */
+.costs-card{background:var(--bg2);border-radius:14px;padding:16px;margin-bottom:12px}
+.costs-total{text-align:center;padding:10px 0 14px}
+.costs-total-eur{font-size:2.6rem;font-weight:800;color:var(--accent2);line-height:1}
+.costs-total-label{font-size:.78rem;color:var(--muted);margin-top:4px}
+.costs-threshold{margin:12px 0 0}
+.costs-threshold-row{display:flex;justify-content:space-between;font-size:.78rem;color:var(--muted);margin-bottom:4px}
+.costs-track{height:6px;background:var(--bg3);border-radius:3px;overflow:hidden}
+.costs-fill{height:100%;background:var(--accent);border-radius:3px;transition:width .4s ease}
+.costs-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.costs-kpi{background:var(--bg3);border-radius:9px;padding:9px 12px}
+.costs-kpi-label{font-size:.7rem;color:var(--muted);margin-bottom:2px}
+.costs-kpi-val{font-size:.95rem;font-weight:700}
+.costs-scan-item{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border);font-size:.82rem}
+.costs-scan-item:last-child{border-bottom:none}
+.costs-scan-date{color:var(--muted)}
+.costs-scan-tokens{color:var(--muted);font-size:.75rem;margin-top:1px}
+
 /* Scroll-to-Top */
 .back-top{position:fixed;bottom:calc(24px + env(safe-area-inset-bottom));right:16px;width:40px;height:40px;border-radius:50%;background:var(--accent);color:#fff;border:none;font-size:20px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.25);display:none;align-items:center;justify-content:center;z-index:200}
 .back-top.vis{display:flex}
@@ -224,6 +242,10 @@ tr:last-child td{border-bottom:none}
     <button class="tab" onclick="switchTab('config')" id="tab-config">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
       Einstellungen
+    </button>
+    <button class="tab" onclick="switchTab('costs')" id="tab-costs">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+      Kosten
     </button>
   </div>
 </header>
@@ -353,6 +375,45 @@ tr:last-child td{border-bottom:none}
     </div>
     <button class="btn-save" onclick="saveConfig()">Speichern</button>
     <div class="save-ok" id="save-ok">✓ Gespeichert</div>
+  </div>
+
+  <!-- Kosten -->
+  <div class="screen" id="screen-costs">
+    <div class="costs-card">
+      <div class="costs-total">
+        <div class="costs-total-eur" id="costs-eur">0,0000 €</div>
+        <div class="costs-total-label">Claude API – kumulativ (Sentiment Scanner)</div>
+      </div>
+      <div class="costs-threshold">
+        <div class="costs-threshold-row">
+          <span id="costs-threshold-label">Nächste Schwelle: 1 €</span>
+          <span id="costs-threshold-pct">0 %</span>
+        </div>
+        <div class="costs-track"><div class="costs-fill" id="costs-fill" style="width:0%"></div></div>
+      </div>
+      <div class="costs-grid">
+        <div class="costs-kpi">
+          <div class="costs-kpi-label">Input-Tokens gesamt</div>
+          <div class="costs-kpi-val" id="costs-input-tokens">–</div>
+        </div>
+        <div class="costs-kpi">
+          <div class="costs-kpi-label">Output-Tokens gesamt</div>
+          <div class="costs-kpi-val" id="costs-output-tokens">–</div>
+        </div>
+        <div class="costs-kpi">
+          <div class="costs-kpi-label">Scans mit Claude</div>
+          <div class="costs-kpi-val" id="costs-scan-count">–</div>
+        </div>
+        <div class="costs-kpi">
+          <div class="costs-kpi-label">Ø Kosten pro Scan</div>
+          <div class="costs-kpi-val" id="costs-avg">–</div>
+        </div>
+      </div>
+    </div>
+    <div class="costs-card">
+      <div class="section-title">Letzte Scans</div>
+      <div id="costs-scan-list"><span style="color:var(--muted);font-size:.85rem">Noch keine Scan-Daten.</span></div>
+    </div>
   </div>
 
 </main>
@@ -493,6 +554,7 @@ function switchTab(name) {
   if (name === 'config') loadConfig();
   if (name === 'portfolio') loadPortfolio();
   if (name === 'dashboard') loadResults();
+  if (name === 'costs') loadCosts();
 }
 
 // ── Scan-Status-Polling ───────────────────────────────────────────────────
@@ -855,6 +917,61 @@ async function saveConfig() {
   const ok = document.getElementById('save-ok');
   ok.style.display = 'block';
   setTimeout(() => ok.style.display = 'none', 2500);
+}
+
+// ── Kosten ────────────────────────────────────────────────────────────────
+async function loadCosts() {
+  try {
+    const r = await fetch('/sentiment/api/costs');
+    const d = await r.json();
+    const eur = d.total_cost_eur || 0;
+    const threshold = Math.floor(eur) + 1;
+    const pct = Math.min(100, Math.round((eur % 1) * 100));
+
+    document.getElementById('costs-eur').textContent =
+      eur.toFixed(4).replace('.', ',') + ' €';
+    document.getElementById('costs-threshold-label').textContent =
+      `Nächste Schwelle: ${threshold} €`;
+    document.getElementById('costs-threshold-pct').textContent = pct + ' %';
+    document.getElementById('costs-fill').style.width = pct + '%';
+    document.getElementById('costs-input-tokens').textContent =
+      (d.total_input_tokens || 0).toLocaleString('de-AT');
+    document.getElementById('costs-output-tokens').textContent =
+      (d.total_output_tokens || 0).toLocaleString('de-AT');
+
+    const scans = d.scans || [];
+    document.getElementById('costs-scan-count').textContent = scans.length;
+    const avg = scans.length
+      ? (scans.reduce((s, x) => s + (x.cost_eur || 0), 0) / scans.length).toFixed(5)
+      : '–';
+    document.getElementById('costs-avg').textContent =
+      scans.length ? avg.replace('.', ',') + ' €' : '–';
+
+    const list = document.getElementById('costs-scan-list');
+    if (!scans.length) {
+      list.innerHTML = '<span style="color:var(--muted);font-size:.85rem">Noch keine Scan-Daten.</span>';
+      return;
+    }
+    list.innerHTML = [...scans].reverse().slice(0, 15).map(s => {
+      const dt = new Date(s.scanned_at);
+      const dateStr = dt.toLocaleString('de-AT', {
+        day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'
+      });
+      const costStr = (s.cost_eur || 0).toFixed(5).replace('.', ',') + ' €';
+      const tok = `${(s.input_tokens||0).toLocaleString('de-AT')} + ${(s.output_tokens||0).toLocaleString('de-AT')} Tokens`;
+      const cand = s.candidates_analyzed ? ` · ${s.candidates_analyzed} Kandidaten` : '';
+      return `<div class="costs-scan-item">
+        <div>
+          <div>${dateStr}</div>
+          <div class="costs-scan-tokens">${tok}${cand}</div>
+        </div>
+        <div style="font-weight:700">${costStr}</div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('costs-scan-list').innerHTML =
+      '<span style="color:var(--muted)">Fehler beim Laden.</span>';
+  }
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────

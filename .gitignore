@@ -6,4 +6,6 @@ results.tmp
 scan.log
 icons/
 tickers.csv
+portfolio.json
+claude_costs.json
 .env

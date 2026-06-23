@@ -47,6 +47,7 @@ systemctl enable --now sentiment-scanner
 - `FINNHUB_API_KEY` – Finnhub Free API Key
 - `TOKEN` – Telegram Bot Token (bestehender Hetzner-Bot)
 - `CHAT_ID` – Telegram Chat-ID
+- `ANTHROPIC_API_KEY` – Claude API Key (für Sentiment-Anreicherung der Kandidaten)
 
 ## nginx-Location
 
@@ -64,18 +65,19 @@ location /sentiment/ {
 ```
 /opt/sentiment-scanner/
 ├── venv/               # eigenes venv
-├── app.py              # Flask + APScheduler + Icon-Serving
-├── scanner.py          # Finnhub-Calls, Filter, Score, Telegram
+├── app.py              # Flask + APScheduler + Icon-Serving + /api/costs
+├── scanner.py          # Finnhub-Calls, Filter, Claude-Sentiment, Score, Telegram, Kosten
 ├── config.json         # editierbar per PWA (keine Credentials!)
 ├── tickers.csv         # Russell 2000 Ticker (gitignored, quartalsweise neu laden)
 ├── results.json        # letztes Scan-Ergebnis (gitignored)
+├── claude_costs.json   # kumulative Claude API Kosten (gitignored, wird automatisch angelegt)
 ├── portfolio.json      # persönliche Portfolio-Einträge (gitignored – enthält Kaufpreise!)
 ├── scan.log            # Protokoll (gitignored)
 ├── icons/              # cairosvg-generierte PNGs (gitignored)
 ├── requirements.txt
 ├── fetch_tickers.py    # Finnhub /stock/symbol?exchange=US → tickers.csv (quartalsweise)
 └── pwa/
-    ├── index.html
+    ├── index.html      # 4 Tabs: Dashboard, Portfolio, Einstellungen, Kosten
     ├── manifest.json
     └── sw.js
 ```
@@ -83,10 +85,12 @@ location /sentiment/ {
 ## Architektur
 
 - **Stufe 1 (API):** Alle ~4700 Ticker → `/company-news` (7d, Keyword-NLP) → Buzz + Bullish + News-Volumen filtern
+- **Stufe 1b (Claude):** Kandidaten (~50–150) → Claude Haiku 4.5 Batch-Sentiment (10 Ticker/Call) → ersetzt Keyword-Scores
 - **Stufe 2 (API):** Kandidaten → `/stock/metric` → MarketCap-Filter
 - **Score:** 45% Bullish + 30% Buzz (normiert) + 25% NLP-Score + opt. KGV-Bonus
 - **Top 50** nach Score → results.json (atomar via tempfile+rename)
-- **Telegram:** Top 5 per HTML-formatierter Nachricht
+- **Telegram:** Top 5 per HTML-formatierter Nachricht + Alert bei neuem €1-Kostenschwellenwert
+- **Kosten:** claude_costs.json (kumulativ, pro Scan) + `/api/costs` Endpoint + Kosten-Tab in PWA
 
 ## Pitfalls
 
@@ -102,6 +106,11 @@ location /sentiment/ {
 - **tickers.csv Quelle:** iShares CSV (blockiert) und Finnhub Index-Endpoints (403 Free Tier) funktionieren nicht → stattdessen Finnhub `/stock/symbol?exchange=US` mit `mic in {XNYS, XNAS}` + `type == "Common Stock"` → 4723 Ticker
 - **portfolio.json ist gitignored** (enthält persönliche Kaufpreise und Stückzahlen – nicht ins Repo!)
 - **SCAN_STATUS Dict:** thread-sicher via Python GIL für einfache Dict-Reads/Writes – kein Lock nötig
+- **Claude nur bei gesetztem Key:** `_claude_enrich_batch` wird nur aufgerufen wenn `ANTHROPIC_API_KEY` in env – ohne Key läuft Keyword-NLP weiter (graceful fallback)
+- **`_news_texts` ist intern:** Wird in `_fetch_sentiment()` befüllt und vor `_write_results()` aus allen Dicts entfernt – nie in results.json gespeichert
+- **Claude Batch-Regex:** Sucht `[...]` im Response-Text mit `re.DOTALL` – robuster als reines JSON-Parsing bei Präambeln
+- **claude_costs.json ist gitignored** – atomares Write via tempfile+rename; wird beim ersten Scan automatisch angelegt
+- **Telegram-Alert €1-Schwelle:** Nur beim Überschreiten eines neuen Ganzzahlwerts, nicht bei jedem Scan – `last_threshold_notified` in claude_costs.json verhindert Duplikate
 - **Sell-Signal nur bei Stimmungsdrehung:** Signal löst NUR aus wenn sich Stimmung ÄNDERT (z.B. Bullish ≥40→<35), nicht bei dauerhaft negativer Stimmung – 5-Punkte-Buffer verhindert Flackern
 - **`source /etc/pka/secrets.env` schlägt fehl** auf Ubuntu (Bash-Inkompatibilität bei manchen Zeilen) → `_load_env()` in fetch_tickers.py liest die Datei direkt (server-seitig, keine Ausgabe)
 - **Voller Scan vs. Portfolio-Scan:** Beide prüfen gegenseitig `SCAN_STATUS["running"]` – nie gleichzeitig

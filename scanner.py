@@ -2,7 +2,9 @@ import os
 import csv
 import json
 import logging
+import re
 import time
+import anthropic
 import requests
 from pathlib import Path
 from datetime import datetime
@@ -14,7 +16,19 @@ BASE = "https://finnhub.io/api/v1"
 BASE_DIR = Path(__file__).parent
 CALLS_PER_MIN = 55
 
+HAIKU_PRICE_INPUT  = 1.00 / 1_000_000   # USD per input token (Haiku 4.5)
+HAIKU_PRICE_OUTPUT = 5.00 / 1_000_000   # USD per output token (Haiku 4.5)
+USD_TO_EUR = 0.92                         # Näherungswert, festgesetzt
+
 _call_times: list[float] = []
+_claude_client: anthropic.Anthropic | None = None
+
+
+def _get_claude() -> anthropic.Anthropic:
+    global _claude_client
+    if _claude_client is None:
+        _claude_client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+    return _claude_client
 
 # ── Scan-Status (thread-safe via GIL für einfache dict-Ops) ──────────────────
 SCAN_STATUS: dict = {
@@ -133,7 +147,7 @@ def _fetch_sentiment(ticker: str) -> dict | None:
         count = len(news)
         if count == 0:
             return {"buzz": 0.0, "articles_week": 0, "bullish_pct": 0.0,
-                    "bearish_pct": 0.0, "sentiment_norm": 50.0}
+                    "bearish_pct": 0.0, "sentiment_norm": 50.0, "_news_texts": []}
         scores = [
             _score_text((a.get("headline") or "") + " " + (a.get("summary") or ""))
             for a in news
@@ -151,6 +165,10 @@ def _fetch_sentiment(ticker: str) -> dict | None:
             "bullish_pct": round(bullish_count / count * 100, 1),
             "bearish_pct": round(bearish_count / count * 100, 1),
             "sentiment_norm": sentiment_norm,
+            "_news_texts": [
+                ((a.get("headline") or "") + " " + (a.get("summary") or ""))[:200]
+                for a in news[:8]
+            ],
         }
     except Exception as e:
         log.warning("%s sentiment: %s", ticker, e)
@@ -193,6 +211,100 @@ def _check_sell_signal(entry: dict, curr: dict) -> tuple[bool, str | None]:
         return True, f"Buzz eingebrochen ({prev_buzz:.2f} → {curr_buzz:.2f})"
 
     return False, None
+
+
+# ── Claude-Sentiment-Anreicherung ────────────────────────────────────────────
+
+def _claude_enrich_batch(candidates: list[dict], token_acc: dict) -> None:
+    """Ersetzt Keyword-Scores der Kandidaten durch Claude-Sentiment. Fallback: Keyword-Werte bleiben."""
+    BATCH_SIZE = 10
+    client = _get_claude()
+
+    for i in range(0, len(candidates), BATCH_SIZE):
+        batch = [c for c in candidates[i:i + BATCH_SIZE] if c.get("_news_texts")]
+        if not batch:
+            continue
+
+        lines = [
+            "Analysiere das Aktien-Sentiment anhand der folgenden Nachrichtentexte.\n"
+            "Antworte NUR mit einem JSON-Array, kein erklärender Text.\n"
+            "Felder je Ticker: ticker, bullish_pct (0-100), bearish_pct (0-100), "
+            "sentiment_norm (0-100), confidence (0-100)\n"
+        ]
+        for c in batch:
+            lines.append(f"\n[{c['ticker']}]")
+            for txt in c["_news_texts"][:5]:
+                lines.append(f"- {txt[:150]}")
+
+        try:
+            resp = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=1024,
+                messages=[{"role": "user", "content": "\n".join(lines)}],
+            )
+            token_acc["input_tokens"]  += resp.usage.input_tokens
+            token_acc["output_tokens"] += resp.usage.output_tokens
+
+            m = re.search(r'\[.*?\]', resp.content[0].text.strip(), re.DOTALL)
+            if not m:
+                log.warning("Claude Batch %d: kein JSON in Antwort", i // BATCH_SIZE)
+                continue
+
+            result_map = {r["ticker"]: r for r in json.loads(m.group()) if "ticker" in r}
+            for c in batch:
+                if c["ticker"] in result_map:
+                    r = result_map[c["ticker"]]
+                    c["bullish_pct"]       = round(float(r.get("bullish_pct",    c["bullish_pct"])),    1)
+                    c["bearish_pct"]       = round(float(r.get("bearish_pct",    c["bearish_pct"])),    1)
+                    c["sentiment_norm"]    = round(float(r.get("sentiment_norm", c["sentiment_norm"])), 1)
+                    c["claude_confidence"] = int(r.get("confidence", 0))
+        except Exception as e:
+            log.warning("Claude Batch %d Fehler: %s", i // BATCH_SIZE, e)
+
+
+def _update_claude_costs(token_acc: dict) -> None:
+    """Summiert Kosten in claude_costs.json und sendet Telegram-Alert bei neuem €1-Schwellenwert."""
+    cost_usd = (
+        token_acc["input_tokens"]  * HAIKU_PRICE_INPUT +
+        token_acc["output_tokens"] * HAIKU_PRICE_OUTPUT
+    )
+    cost_eur = cost_usd * USD_TO_EUR
+
+    path = BASE_DIR / "claude_costs.json"
+    if path.exists():
+        data = json.loads(path.read_text())
+    else:
+        data = {
+            "total_cost_eur": 0.0, "total_cost_usd": 0.0,
+            "total_input_tokens": 0, "total_output_tokens": 0,
+            "last_threshold_notified": 0, "scans": [],
+        }
+
+    data["total_input_tokens"]  += token_acc["input_tokens"]
+    data["total_output_tokens"] += token_acc["output_tokens"]
+    data["total_cost_usd"] = round(data["total_cost_usd"] + cost_usd, 6)
+    data["total_cost_eur"] = round(data["total_cost_eur"] + cost_eur, 6)
+    data["scans"].append({
+        "scanned_at":         datetime.utcnow().isoformat() + "Z",
+        "input_tokens":       token_acc["input_tokens"],
+        "output_tokens":      token_acc["output_tokens"],
+        "candidates_analyzed": token_acc.get("candidates", 0),
+        "cost_usd":           round(cost_usd, 6),
+        "cost_eur":           round(cost_eur, 6),
+    })
+
+    new_threshold = int(data["total_cost_eur"])
+    if new_threshold > data["last_threshold_notified"]:
+        _tg_post(
+            f"💰 <b>Claude API: {new_threshold} € kumulativ</b>\n"
+            f"Sentiment Scanner: {data['total_cost_eur']:.4f} €\n"
+            f"({data['total_input_tokens']:,} Input + {data['total_output_tokens']:,} Output Tokens)"
+        )
+        data["last_threshold_notified"] = new_threshold
+
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    tmp.rename(path)
 
 
 # ── Voller Scan (alle Ticker) ─────────────────────────────────────────────────
@@ -258,6 +370,19 @@ def run_scan(cfg: dict) -> dict:
         candidates.append({**t, **sent})
 
     log.info("Sentiment-Filter: %d Kandidaten, %d API-Fehler", len(candidates), sent_errors)
+
+    # Claude-Anreicherung (nur Kandidaten, nur wenn API-Key gesetzt)
+    scan_tokens = {"input_tokens": 0, "output_tokens": 0, "candidates": len(candidates)}
+    if candidates and os.environ.get("ANTHROPIC_API_KEY"):
+        _claude_enrich_batch(candidates, scan_tokens)
+        log.info("Claude-Analyse: %d Input-, %d Output-Tokens",
+                 scan_tokens["input_tokens"], scan_tokens["output_tokens"])
+
+    # _news_texts aus allen Dicts entfernen (nicht in results.json speichern)
+    for c in candidates:
+        c.pop("_news_texts", None)
+    for v in all_scanned.values():
+        v.pop("_news_texts", None)
 
     # Stufe 2: MarketCap-Filter (nur für Kandidaten)
     valid: list[dict] = []
@@ -327,7 +452,7 @@ def run_scan(cfg: dict) -> dict:
         "scanned_count": len(tickers),
         "candidates_count": len(candidates),
         "results_count": len(valid),
-        "errors": errors,
+        "errors": sent_errors,
         "results": top_n,
     }
     _write_results(output)
@@ -337,6 +462,9 @@ def run_scan(cfg: dict) -> dict:
 
     log.info("Vollständiger Scan fertig – %d Ergebnisse", len(top_n))
     _send_telegram_top5(top_n[:5], len(tickers))
+
+    if scan_tokens["input_tokens"] > 0:
+        _update_claude_costs(scan_tokens)
 
     SCAN_STATUS.update({
         "running": False,
