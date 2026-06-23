@@ -128,6 +128,7 @@ def _fetch_sentiment(ticker: str) -> dict | None:
         week_ago = (date.today() - timedelta(days=7)).isoformat()
         news = _fh_get("/company-news", {"symbol": ticker, "from": week_ago, "to": today})
         if not isinstance(news, list):
+            log.warning("%s sentiment: Finnhub-Antwort kein Array: %s", ticker, str(news)[:120])
             return None
         count = len(news)
         if count == 0:
@@ -219,7 +220,9 @@ def run_scan(cfg: dict) -> dict:
     # Stufe 1: news-sentiment → Sentiment-Filter
     candidates: list[dict] = []
     all_scanned: dict[str, dict] = {}  # ticker → sentiment (auch verworfene)
-    errors = 0
+    sent_errors = 0
+    consecutive_errors = 0
+    EARLY_ABORT_THRESHOLD = 50  # Abbruch bei 50 API-Fehlern in Folge
 
     for i, t in enumerate(tickers):
         if SCAN_STATUS.get("abort"):
@@ -230,9 +233,15 @@ def run_scan(cfg: dict) -> dict:
 
         sent = _fetch_sentiment(t["ticker"])
         if sent is None:
-            errors += 1
+            sent_errors += 1
+            consecutive_errors += 1
+            if consecutive_errors >= EARLY_ABORT_THRESHOLD:
+                log.error("Scan abgebrochen: %d aufeinanderfolgende API-Fehler – Finnhub-Key oder Tageslimit prüfen!", consecutive_errors)
+                SCAN_STATUS["abort"] = True
+                break
             continue
 
+        consecutive_errors = 0
         all_scanned[t["ticker"]] = {**t, **sent}
 
         # Filter anwenden
@@ -248,10 +257,11 @@ def run_scan(cfg: dict) -> dict:
 
         candidates.append({**t, **sent})
 
-    log.info("Sentiment-Filter: %d Kandidaten", len(candidates))
+    log.info("Sentiment-Filter: %d Kandidaten, %d API-Fehler", len(candidates), sent_errors)
 
     # Stufe 2: MarketCap-Filter (nur für Kandidaten)
     valid: list[dict] = []
+    mc_errors = 0
     for c in candidates:
         SCAN_STATUS["current_ticker"] = c["ticker"]
         try:
@@ -271,10 +281,10 @@ def run_scan(cfg: dict) -> dict:
             c["pe"] = pe
             valid.append(c)
         except Exception as e:
-            errors += 1
+            mc_errors += 1
             log.debug("%s metric: %s", c["ticker"], e)
 
-    log.info("MarketCap-Filter: %d Treffer, %d Fehler", len(valid), errors)
+    log.info("MarketCap-Filter: %d Treffer, %d Fehler", len(valid), mc_errors)
 
     for v in valid:
         v["score"] = _calc_score(v)
