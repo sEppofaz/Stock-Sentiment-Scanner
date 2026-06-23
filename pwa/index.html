@@ -436,16 +436,16 @@ tr:last-child td{border-bottom:none}
         <p class="info-p">Konkret bedeutet das in unserem System:</p>
         <ul class="info-list">
           <li>Unser Scanner holt die Artikel der letzten 7 Tage je Ticker via Finnhub (<code>/company-news</code>: Reuters, Benzinga, MarketWatch etc.)</li>
-          <li>Jeder Artikel wird per Keyword-Scoring analysiert: positive Signalwörter (z.&nbsp;B. „beat", „record", „upgrade") vs. negative (z.&nbsp;B. „miss", „loss", „downgrade")</li>
+          <li><b>Stufe 1 – Keyword-Vorfilter:</b> Schnelles Screening aller ~4.700 Ticker via BULLISH_WORDS / BEARISH_WORDS → filtert auf ~50–150 Kandidaten</li>
+          <li><b>Stufe 2 – Claude KI-Analyse:</b> Die Kandidaten werden von Claude Haiku analysiert → ersetzt die Keyword-Scores durch kontextbewusstes Sentiment</li>
           <li>Daraus entstehen die Kennzahlen: Bullish %, Bearish %, Buzz (Artikelanzahl normiert)</li>
         </ul>
-        <p class="info-p"><b>Was es ist:</b> Die Stimmung der Finanzpresse zu einer Aktie, abgeleitet aus Schlagzeilen und Artikelzusammenfassungen der letzten 7 Tage.</p>
+        <p class="info-p"><b>Was es ist:</b> Die Stimmung der Finanzpresse zu einer Aktie, abgeleitet aus Schlagzeilen und Artikelzusammenfassungen der letzten 7 Tage — analysiert durch Claude KI.</p>
         <p class="info-p"><b>Was es nicht ist:</b></p>
         <ul class="info-list">
           <li>Keine Stimmung von privaten Anlegern (kein Reddit, kein Twitter/X)</li>
           <li>Keine fundamentale Bewertung (kein KGV, kein Umsatz)</li>
           <li>Keine Kursvorhersage</li>
-          <li>Kein professionelles NLP — das Keyword-Scoring ist eine Annäherung</li>
         </ul>
         <p class="info-p"><b>Warum das für uns relevant ist:</b> Wenn die Finanzpresse zunehmend positiv über eine wenig beachtete Small-Cap-Aktie berichtet — Buzz steigt, bullish-Anteil steigt — dann ist das ein frühes Signal, bevor die breite Masse es wahrnimmt. Das ist die Grundhypothese unseres Scanners.</p>
         <p class="info-p">Ob diese Hypothese in der Praxis funktioniert, ist nicht bewiesen — das ist der spekulative Teil des Vorhabens.</p>
@@ -454,7 +454,7 @@ tr:last-child td{border-bottom:none}
       <!-- Score -->
       <div class="info-section">
         <div class="info-section-title">Score-Berechnung</div>
-        <p class="info-p">45 % Bullish-Anteil + 30 % Buzz (normiert: 3 Artikel/Woche = 1,0) + 25 % Keyword-Score. Optionaler KGV-Bonus wenn 0 &lt; KGV &lt; 30.</p>
+        <p class="info-p">45 % Bullish-Anteil + 30 % Buzz (normiert: 3 Artikel/Woche = 1,0) + 25 % Sentiment-Score (Claude KI). Optionaler KGV-Bonus wenn 0 &lt; KGV &lt; 30.</p>
         <p class="info-p">Die Top-N Aktien nach Score werden im Dashboard angezeigt — das sind die Aktien mit der stärksten Kombination aus positiver Stimmung, Medienaufmerksamkeit und Keyword-Signal.</p>
       </div>
 
