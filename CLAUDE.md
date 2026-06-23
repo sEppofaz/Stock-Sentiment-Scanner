@@ -106,6 +106,7 @@ location /sentiment/ {
 - **tickers.csv Quelle:** iShares CSV (blockiert) und Finnhub Index-Endpoints (403 Free Tier) funktionieren nicht → stattdessen Finnhub `/stock/symbol?exchange=US` mit `mic in {XNYS, XNAS}` + `type == "Common Stock"` → 4723 Ticker
 - **portfolio.json ist gitignored** (enthält persönliche Kaufpreise und Stückzahlen – nicht ins Repo!)
 - **SCAN_STATUS Dict:** thread-sicher via Python GIL für einfache Dict-Reads/Writes – kein Lock nötig
+- **`config.json` ist gitignored** – wird NICHT durch `git pull` überschrieben. `config.default.json` im Repo ist die Vorlage; `_load_cfg()` kopiert sie automatisch nach `config.json` wenn die Datei fehlt (Erstinstallation).
 - **Claude nur bei gesetztem Key:** `_claude_enrich_batch` wird nur aufgerufen wenn `ANTHROPIC_API_KEY` in env – ohne Key läuft Keyword-NLP weiter (graceful fallback)
 - **`_news_texts` ist intern:** Wird in `_fetch_sentiment()` befüllt und vor `_write_results()` aus allen Dicts entfernt – nie in results.json gespeichert
 - **Claude Batch-Regex:** Sucht `[...]` im Response-Text mit `re.DOTALL` – robuster als reines JSON-Parsing bei Präambeln
