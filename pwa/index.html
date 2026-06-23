@@ -374,16 +374,17 @@ tr:last-child td{border-bottom:none}
         <p class="info-p">Aktien-Sentiment = die messbare Stimmungslage in Medienberichten und Nachrichten zu einer bestimmten Aktie.</p>
         <p class="info-p">Konkret bedeutet das in unserem System:</p>
         <ul class="info-list">
-          <li>Finnhub analysiert automatisch Artikel aus Finanzmedien (Reuters, Benzinga, MarketWatch etc.) zu einem Ticker</li>
-          <li>Jeder Artikel wird klassifiziert: bullish (positiv) / bearish (negativ) / neutral</li>
-          <li>Daraus entstehen die Kennzahlen: bullishPercent, bearishPercent, buzz (Artikelvolumen)</li>
+          <li>Unser Scanner holt die Artikel der letzten 7 Tage je Ticker via Finnhub (<code>/company-news</code>: Reuters, Benzinga, MarketWatch etc.)</li>
+          <li>Jeder Artikel wird per Keyword-Scoring analysiert: positive Signalwörter (z.&nbsp;B. „beat", „record", „upgrade") vs. negative (z.&nbsp;B. „miss", „loss", „downgrade")</li>
+          <li>Daraus entstehen die Kennzahlen: Bullish %, Bearish %, Buzz (Artikelanzahl normiert)</li>
         </ul>
-        <p class="info-p"><b>Was es ist:</b> Die Stimmung der Finanzpresse zu einer Aktie, aggregiert über die letzten Tage.</p>
+        <p class="info-p"><b>Was es ist:</b> Die Stimmung der Finanzpresse zu einer Aktie, abgeleitet aus Schlagzeilen und Artikelzusammenfassungen der letzten 7 Tage.</p>
         <p class="info-p"><b>Was es nicht ist:</b></p>
         <ul class="info-list">
           <li>Keine Stimmung von privaten Anlegern (kein Reddit, kein Twitter/X)</li>
           <li>Keine fundamentale Bewertung (kein KGV, kein Umsatz)</li>
           <li>Keine Kursvorhersage</li>
+          <li>Kein professionelles NLP — das Keyword-Scoring ist eine Annäherung</li>
         </ul>
         <p class="info-p"><b>Warum das für uns relevant ist:</b> Wenn die Finanzpresse zunehmend positiv über eine wenig beachtete Small-Cap-Aktie berichtet — Buzz steigt, bullish-Anteil steigt — dann ist das ein frühes Signal, bevor die breite Masse es wahrnimmt. Das ist die Grundhypothese unseres Scanners.</p>
         <p class="info-p">Ob diese Hypothese in der Praxis funktioniert, ist nicht bewiesen — das ist der spekulative Teil des Vorhabens.</p>
@@ -392,8 +393,8 @@ tr:last-child td{border-bottom:none}
       <!-- Score -->
       <div class="info-section">
         <div class="info-section-title">Score-Berechnung</div>
-        <p class="info-p">45 % Bullish-Anteil + 30 % Buzz (normiert auf Jahresdurchschnitt) + 25 % NLP-Score. Optionaler KGV-Bonus wenn 0 &lt; KGV &lt; 30.</p>
-        <p class="info-p">Die Top-N Aktien nach Score werden im Dashboard angezeigt — das sind die Aktien mit der stärksten Kombination aus positiver Stimmung, Medienaufmerksamkeit und NLP-Signal.</p>
+        <p class="info-p">45 % Bullish-Anteil + 30 % Buzz (normiert: 3 Artikel/Woche = 1,0) + 25 % Keyword-Score. Optionaler KGV-Bonus wenn 0 &lt; KGV &lt; 30.</p>
+        <p class="info-p">Die Top-N Aktien nach Score werden im Dashboard angezeigt — das sind die Aktien mit der stärksten Kombination aus positiver Stimmung, Medienaufmerksamkeit und Keyword-Signal.</p>
       </div>
 
       <!-- Portfolio -->
@@ -410,13 +411,13 @@ tr:last-child td{border-bottom:none}
         <div class="info-setting">
           <div class="info-setting-name">Scan-Zeiten (UTC, Mo–Fr)</div>
           <div class="info-setting-val">Aktuell: 13:00 + 19:30 UTC = 15:00 + 21:30 Uhr MESZ</div>
-          <span>Wann der Server automatisch alle ~2.000 Ticker scannt. Ein Scan dauert ~30 Min und kostet ~600 Finnhub-API-Calls. Auf dem Free-Tier (60 Calls/min) sind mehr als 2–3 Zeiten täglich nicht sinnvoll.</span>
+          <span>Wann der Server automatisch alle ~4.700 Ticker scannt. Ein vollständiger Scan dauert ~90 Min (4.700 API-Calls, gedrosselt auf 55/min). Auf dem Free-Tier sind mehr als 2–3 Zeiten täglich nicht sinnvoll. Ein laufender Scan kann über den Abbruch-Button in der Fortschrittsanzeige gestoppt werden.</span>
         </div>
 
         <div class="info-setting">
           <div class="info-setting-name">Bullish % min.</div>
           <div class="info-setting-val">Aktuell: 40 %</div>
-          <span>Nur Aktien, bei denen mindestens X % der Artikel positiv eingestuft sind, kommen ins Ergebnis. <b>Höher</b> = weniger, aber bullischere Kandidaten. <b>Niedriger</b> = mehr Ergebnisse, mehr Rauschen.</span>
+          <span>Nur Aktien, bei denen mindestens X % der Artikel per Keyword-Scoring als positiv eingestuft werden, kommen ins Ergebnis. <b>Höher</b> = weniger, aber bullischere Kandidaten. <b>Niedriger</b> = mehr Ergebnisse, mehr Rauschen.</span>
         </div>
 
         <div class="info-setting">
@@ -440,7 +441,7 @@ tr:last-child td{border-bottom:none}
         <div class="info-setting">
           <div class="info-setting-name">Buzz-Trend steigend</div>
           <div class="info-setting-val">Aktuell: aktiviert</div>
-          <span>Wenn aktiviert: Nur Aktien, bei denen das Artikel-Volumen über dem Jahresdurchschnitt liegt (buzz &gt; 1,0 laut Finnhub). Das ist das eigentliche Früh-Signal — steigendes Medieninteresse bevor der Kurs reagiert. <b>Deaktiviert</b>: Auch Aktien mit positivem Sentiment aber normalem Buzz erscheinen.</span>
+          <span>Wenn aktiviert: Nur Aktien mit mehr als 3 Artikeln in den letzten 7 Tagen (buzz &gt; 1,0; Basis: 3 Artikel/Woche = 1,0). Das ist das eigentliche Früh-Signal — steigendes Medieninteresse bevor der Kurs reagiert. <b>Deaktiviert</b>: Auch Aktien mit positivem Sentiment aber wenig Berichterstattung erscheinen.</span>
         </div>
 
         <div class="info-setting">
