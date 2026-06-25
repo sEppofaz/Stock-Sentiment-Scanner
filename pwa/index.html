@@ -471,7 +471,7 @@ tr:last-child td{border-bottom:none}
       <!-- Portfolio -->
       <div class="info-section">
         <div class="info-section-title">Portfolio-Überwachung</div>
-        <p class="info-p">Portfolio-Aktien werden stündlich (9:30–22:30 UTC, Mo–Fr) geprüft. Bei echter Stimmungsdrehung (z.&nbsp;B. Bullish ≥ 40 → &lt; 35) kommt ein Telegram-Alert und die Aktie wird rot markiert.</p>
+        <p class="info-p">Portfolio-Aktien werden alle 15 Minuten während der NYSE-Börsenzeiten (14:30–21:00 UTC, Mo–Fr) geprüft. Bei echter Stimmungsdrehung (z.&nbsp;B. Bullish ≥ 40 → &lt; 35) kommt ein Telegram-Alert und die Aktie wird rot markiert.</p>
         <p class="info-p">Ein 5-Punkte-Buffer verhindert Flackern — das Sell-Signal löst nur bei echter Trendwende aus, nicht bei kurzfristigen Schwankungen.</p>
       </div>
 
@@ -482,7 +482,7 @@ tr:last-child td{border-bottom:none}
         <div class="info-setting">
           <div class="info-setting-name">Scan-Zeiten (UTC, Mo–Fr)</div>
           <div class="info-setting-val">Aktuell: 13:00 + 19:30 UTC = 15:00 + 21:30 Uhr MESZ</div>
-          <span>Wann der Server automatisch alle ~4.700 Ticker scannt. Ein vollständiger Scan dauert ~90 Min (4.700 API-Calls, gedrosselt auf 55/min). Auf dem Free-Tier sind mehr als 2–3 Zeiten täglich nicht sinnvoll. Ein laufender Scan kann über den Abbruch-Button in der Fortschrittsanzeige gestoppt werden.</span>
+          <span>Wann der Server automatisch alle ~4.700 Ticker scannt. Ein vollständiger Scan dauert ~90 Min (4.700 API-Calls, gedrosselt auf 55/min). Auf dem Free-Tier sind mehr als 2–3 Zeiten täglich nicht sinnvoll. Ein laufender Scan kann über den Abbruch-Button in der Fortschrittsanzeige gestoppt werden. Über den Toggle „Vollscan + Portfolio-Scan aktiv" können alle automatischen Scans pausiert werden ohne die Zeiten zu verlieren.</span>
         </div>
 
         <div class="info-setting">
@@ -523,7 +523,7 @@ tr:last-child td{border-bottom:none}
       </div>
 
       <div class="info-disclaimer">Kein Investment-Advice. Nur Sentiment-Daten aus Medienberichten. Keine Kauf- oder Verkaufsempfehlung.</div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.3 · 2026-06-23</p>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.4 · 2026-06-25</p>
     </div>
   </div>
 </div>
