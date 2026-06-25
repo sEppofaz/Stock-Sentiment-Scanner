@@ -47,7 +47,7 @@ systemctl enable --now sentiment-scanner
 - `FINNHUB_API_KEY` – Finnhub Free API Key
 - `TOKEN` – Telegram Bot Token (bestehender Hetzner-Bot)
 - `CHAT_ID` – Telegram Chat-ID
-- `ANTHROPIC_API_KEY` – Claude API Key (für Sentiment-Anreicherung der Kandidaten)
+- `CLAUDE_API_KEY` – Claude API Key (für Sentiment-Anreicherung der Kandidaten)
 
 ## nginx-Location
 

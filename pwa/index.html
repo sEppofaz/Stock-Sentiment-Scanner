@@ -332,6 +332,16 @@ tr:last-child td{border-bottom:none}
   <!-- Einstellungen -->
   <div class="screen" id="screen-config">
     <div class="cfg-section">
+      <div class="cfg-title">Automatischer Scan</div>
+      <div class="cfg-row">
+        <span class="cfg-label">Vollscan + Portfolio-Scan aktiv</span>
+        <label class="cfg-toggle">
+          <input type="checkbox" id="cfg-scan-enabled">
+          <span class="cfg-slider"></span>
+        </label>
+      </div>
+    </div>
+    <div class="cfg-section">
       <div class="cfg-title">Scan-Zeiten (UTC, Mo–Fr)</div>
       <div class="cfg-times" id="cfg-times"></div>
       <div class="cfg-time-add">
@@ -873,6 +883,7 @@ async function loadConfig() {
   const cfg = await r.json();
   const f = cfg.filter;
   _scanTimes = cfg.scan_times_utc || [];
+  document.getElementById('cfg-scan-enabled').checked = cfg.scan_enabled !== false;
   renderTimes();
   document.getElementById('cfg-bullish-min').value = f.bullish_pct_min;
   document.getElementById('cfg-bearish-max').value = f.bearish_pct_max;
@@ -903,6 +914,7 @@ function removeTime(i) { _scanTimes.splice(i, 1); renderTimes(); }
 
 async function saveConfig() {
   const cfg = {
+    scan_enabled: document.getElementById('cfg-scan-enabled').checked,
     scan_times_utc: _scanTimes,
     filter: {
       bullish_pct_min: +document.getElementById('cfg-bullish-min').value,
@@ -977,6 +989,7 @@ async function loadCosts() {
 
 // ── Init ──────────────────────────────────────────────────────────────────
 loadResults();
+loadPortfolio();
 // Sofort Status prüfen (könnte Scan von vorhin noch laufen)
 pollScanStatus().then(() => {
   if (document.getElementById('progress-bar').classList.contains('show')) startPolling();

@@ -27,7 +27,7 @@ _claude_client: anthropic.Anthropic | None = None
 def _get_claude() -> anthropic.Anthropic:
     global _claude_client
     if _claude_client is None:
-        _claude_client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+        _claude_client = anthropic.Anthropic(api_key=os.environ.get("CLAUDE_API_KEY", ""))
     return _claude_client
 
 # ── Scan-Status (thread-safe via GIL für einfache dict-Ops) ──────────────────
@@ -373,7 +373,7 @@ def run_scan(cfg: dict) -> dict:
 
     # Claude-Anreicherung (nur Kandidaten, nur wenn API-Key gesetzt)
     scan_tokens = {"input_tokens": 0, "output_tokens": 0, "candidates": len(candidates)}
-    if candidates and os.environ.get("ANTHROPIC_API_KEY"):
+    if candidates and os.environ.get("CLAUDE_API_KEY"):
         _claude_enrich_batch(candidates, scan_tokens)
         log.info("Claude-Analyse: %d Input-, %d Output-Tokens",
                  scan_tokens["input_tokens"], scan_tokens["output_tokens"])

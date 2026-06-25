@@ -3,6 +3,7 @@ import csv
 import json
 import logging
 import threading
+from datetime import datetime
 from pathlib import Path
 from flask import Flask, jsonify, request, send_file, Response
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -82,6 +83,15 @@ def _save_portfolio(data: list[dict]):
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 
+def _market_open() -> bool:
+    """True wenn NYSE/NASDAQ geöffnet (Mo–Fr 14:30–21:00 UTC)."""
+    now = datetime.utcnow()
+    if now.weekday() >= 5:
+        return False
+    t = now.hour * 60 + now.minute
+    return 870 <= t <= 1260  # 14:30=870, 21:00=1260
+
+
 scheduler = BackgroundScheduler()
 
 
@@ -98,20 +108,23 @@ def _reschedule():
             id=f"scan_{h:02d}{m:02d}",
         )
 
-    # Portfolio-Schnell-Scan: stündlich Mo–Fr 9–22 UTC
+    # Portfolio-Scan: alle 15 Min Mo–Fr 14:00–21:45 UTC (market_open() als Guard)
     scheduler.add_job(
         _do_portfolio_scan, "cron",
-        hour="9-22", minute=30, day_of_week="mon-fri",
+        hour="14-21", minute="0,15,30,45", day_of_week="mon-fri",
         id="portfolio_scan",
     )
 
     log.info(
-        "Scan-Zeiten: %s (Mo–Fr UTC) + Portfolio-Scan stündlich 9:30–22:30 UTC",
+        "Scan-Zeiten: %s (Mo–Fr UTC) + Portfolio-Scan alle 15 Min 14:00–21:45 UTC",
         cfg.get("scan_times_utc"),
     )
 
 
 def _do_full_scan():
+    if not _load_cfg().get("scan_enabled", True):
+        log.info("Vollständiger Scan übersprungen – Scan deaktiviert")
+        return
     from scanner import run_scan, SCAN_STATUS
     if SCAN_STATUS.get("running"):
         log.info("Vollständiger Scan übersprungen – Scan läuft bereits")
@@ -123,6 +136,10 @@ def _do_full_scan():
 
 
 def _do_portfolio_scan():
+    if not _load_cfg().get("scan_enabled", True):
+        return
+    if not _market_open():
+        return
     from scanner import run_portfolio_scan, SCAN_STATUS
     if SCAN_STATUS.get("running"):
         log.info("Portfolio-Scan übersprungen – voller Scan läuft noch")
