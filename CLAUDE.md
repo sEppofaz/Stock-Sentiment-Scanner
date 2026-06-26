@@ -92,6 +92,19 @@ location /sentiment/ {
 - **Telegram:** Top 5 per HTML-formatierter Nachricht + Alert bei neuem €1-Kostenschwellenwert
 - **Kosten:** claude_costs.json (kumulativ, pro Scan) + `/api/costs` Endpoint + Kosten-Tab in PWA
 
+## KI-Toggle (ki_enabled)
+
+- `ki_enabled` in `config.json` (Standard: `false`) steuert ob Claude-Anreicherung läuft.
+- Toggle im Einstellungen-Tab der PWA → „KI-Analyse (Claude) aktiv".
+- Ohne KI: nur Keyword-NLP, 0 € Claude-Kosten. Mit KI: ~0,18 € pro Scan (Haiku 4.5).
+- `config.json` ist gitignored → nach `git pull` auf Server nicht überschrieben.
+
+## Phase-Tracking im Scan
+
+`SCAN_STATUS["phase"]` wechselt zwischen `"stufe1"` → `"claude"` → `"stufe2"`.
+Frontend zeigt 99% wenn phase = claude oder stufe2 (nicht irreführende 100%).
+Zeitschätzung (Min verbleibend) nur während stufe1 wenn progress > 50 Ticker.
+
 ## Pitfalls
 
 - **`/news-sentiment` ist KEIN Free-Tier-Endpoint** → gibt 403 zurück → stattdessen `/company-news` verwenden
@@ -110,6 +123,9 @@ location /sentiment/ {
 - **Claude nur bei gesetztem Key:** `_claude_enrich_batch` wird nur aufgerufen wenn `CLAUDE_API_KEY` in env – ohne Key läuft Keyword-NLP weiter (graceful fallback). Variablenname ist `CLAUDE_API_KEY` (nicht `ANTHROPIC_API_KEY`!)
 - **Portfolio-Scan-Frequenz:** Alle 15 Min Mo–Fr 14:00–21:45 UTC (APScheduler), aber nur ausgeführt wenn `_market_open()` True ist (14:30–21:00 UTC = NYSE-Börsenzeiten). Guard: `870 <= h*60+min <= 1260`
 - **`scan_enabled` in config.json:** Pausiert Vollscan + Portfolio-Scan (beide Jobs bleiben registriert, prüfen das Flag beim Start). Toggle im Einstellungen-Tab der PWA.
+- **`ki_enabled` in config.json:** Steuert Claude-Anreicherung (Standard: false). Toggle im Einstellungen-Tab. Ohne dieses Flag → nur Keyword-NLP.
+- **Wochenend-Guard:** `POST /api/scan` gibt 409 zurück an Sa/So (UTC weekday ≥ 5). Frontend zeigt Alert statt API-Call.
+- **Portfolio-Scan manuell:** `POST /api/portfolio/scan` – Endpoint für den „Jetzt aktualisieren"-Button im Portfolio-Tab.
 - **`_news_texts` ist intern:** Wird in `_fetch_sentiment()` befüllt und vor `_write_results()` aus allen Dicts entfernt – nie in results.json gespeichert
 - **Claude Batch-Regex:** Sucht `[...]` im Response-Text mit `re.DOTALL` – robuster als reines JSON-Parsing bei Präambeln
 - **claude_costs.json ist gitignored** – atomares Write via tempfile+rename; wird beim ersten Scan automatisch angelegt

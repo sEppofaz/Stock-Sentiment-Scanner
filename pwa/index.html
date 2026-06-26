@@ -464,7 +464,7 @@ tr:last-child td{border-bottom:none}
         <ul class="info-list">
           <li>Unser Scanner holt die Artikel der letzten 7 Tage je Ticker via Finnhub (<code>/company-news</code>: Reuters, Benzinga, MarketWatch etc.)</li>
           <li><b>Stufe 1 – Keyword-Vorfilter:</b> Schnelles Screening aller ~4.700 Ticker via BULLISH_WORDS / BEARISH_WORDS → filtert auf ~50–150 Kandidaten</li>
-          <li><b>Stufe 2 – Claude KI-Analyse:</b> Die Kandidaten werden von Claude Haiku analysiert → ersetzt die Keyword-Scores durch kontextbewusstes Sentiment</li>
+          <li><b>Stufe 2 – Claude KI-Analyse (optional):</b> Wenn „KI-Analyse aktiv" eingeschaltet ist, werden die Kandidaten von Claude Haiku analysiert → ersetzt Keyword-Scores durch kontextbewusstes Sentiment. KI aus = nur Keyword-NLP, 0 € Claude-Kosten.</li>
           <li>Daraus entstehen die Kennzahlen: Bullish %, Bearish %, Buzz (Artikelanzahl normiert)</li>
         </ul>
         <p class="info-p"><b>Was es ist:</b> Die Stimmung der Finanzpresse zu einer Aktie, abgeleitet aus Schlagzeilen und Artikelzusammenfassungen der letzten 7 Tage — analysiert durch Claude KI.</p>
@@ -497,9 +497,21 @@ tr:last-child td{border-bottom:none}
         <div class="info-section-title">Einstellungen erklärt</div>
 
         <div class="info-setting">
+          <div class="info-setting-name">Vollscan + Portfolio-Scan aktiv</div>
+          <div class="info-setting-val">Pausiert alle automatischen Scans</div>
+          <span>Unterbricht automatische Vollscans und Portfolio-Scans ohne die Zeiten zu verlieren. Manuelle Scans über den Dashboard-Button sind weiterhin möglich (außer am Wochenende).</span>
+        </div>
+
+        <div class="info-setting">
+          <div class="info-setting-name">KI-Analyse (Claude) aktiv</div>
+          <div class="info-setting-val">Standard: aus</div>
+          <span>Schaltet die Claude-Haiku-Analyse für gefilterte Kandidaten ein. <b>Aus</b>: nur Keyword-NLP, 0 € Claude-Kosten, schneller. <b>An</b>: ~0,18 € pro Vollscan, kontextbewussteres Sentiment. Nur bei Bedarf aktivieren.</span>
+        </div>
+
+        <div class="info-setting">
           <div class="info-setting-name">Scan-Zeiten (UTC, Mo–Fr)</div>
           <div class="info-setting-val">Aktuell: 13:00 + 19:30 UTC = 15:00 + 21:30 Uhr MESZ</div>
-          <span>Wann der Server automatisch alle ~4.700 Ticker scannt. Ein vollständiger Scan dauert ~90 Min (4.700 API-Calls, gedrosselt auf 55/min). Auf dem Free-Tier sind mehr als 2–3 Zeiten täglich nicht sinnvoll. Ein laufender Scan kann über den Abbruch-Button in der Fortschrittsanzeige gestoppt werden. Über den Toggle „Vollscan + Portfolio-Scan aktiv" können alle automatischen Scans pausiert werden ohne die Zeiten zu verlieren.</span>
+          <span>Wann der Server automatisch alle ~4.700 Ticker scannt. Ein vollständiger Scan dauert ~90 Min. Auf dem Free-Tier sind mehr als 2–3 Zeiten täglich nicht sinnvoll. Am Wochenende wird kein Scan gestartet (keine Börsendaten). Ein laufender Scan kann über den Abbruch-Button gestoppt werden.</span>
         </div>
 
         <div class="info-setting">
@@ -540,7 +552,7 @@ tr:last-child td{border-bottom:none}
       </div>
 
       <div class="info-disclaimer">Kein Investment-Advice. Nur Sentiment-Daten aus Medienberichten. Keine Kauf- oder Verkaufsempfehlung.</div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.4 · 2026-06-25</p>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.5 · 2026-06-26</p>
     </div>
   </div>
 </div>
