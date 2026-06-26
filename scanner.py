@@ -319,6 +319,7 @@ def run_scan(cfg: dict) -> dict:
         "started_at": datetime.utcnow().isoformat() + "Z",
         "progress": 0, "total": 0,
         "current_ticker": "", "finished_at": None,
+        "phase": "stufe1",
     })
 
     f = cfg["filter"]
@@ -374,6 +375,7 @@ def run_scan(cfg: dict) -> dict:
     # Claude-Anreicherung (nur Kandidaten, nur wenn API-Key gesetzt)
     scan_tokens = {"input_tokens": 0, "output_tokens": 0, "candidates": len(candidates)}
     if candidates and os.environ.get("CLAUDE_API_KEY"):
+        SCAN_STATUS["phase"] = "claude"
         _claude_enrich_batch(candidates, scan_tokens)
         log.info("Claude-Analyse: %d Input-, %d Output-Tokens",
                  scan_tokens["input_tokens"], scan_tokens["output_tokens"])
@@ -385,6 +387,7 @@ def run_scan(cfg: dict) -> dict:
         v.pop("_news_texts", None)
 
     # Stufe 2: MarketCap-Filter (nur für Kandidaten)
+    SCAN_STATUS["phase"] = "stufe2"
     valid: list[dict] = []
     mc_errors = 0
     for c in candidates:

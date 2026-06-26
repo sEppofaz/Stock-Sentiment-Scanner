@@ -202,11 +202,22 @@ def api_results():
 
 @app.route("/sentiment/api/scan", methods=["POST"])
 def api_scan_trigger():
+    if datetime.utcnow().weekday() >= 5:
+        return jsonify({"ok": False, "message": "Kein Scan am Wochenende"}), 409
     from scanner import SCAN_STATUS
     if SCAN_STATUS.get("running"):
         return jsonify({"ok": False, "message": "Scan läuft bereits"}), 409
     threading.Thread(target=_do_full_scan, daemon=True).start()
     return jsonify({"ok": True, "message": "Scan gestartet"})
+
+
+@app.route("/sentiment/api/portfolio/scan", methods=["POST"])
+def api_portfolio_scan_trigger():
+    from scanner import SCAN_STATUS
+    if SCAN_STATUS.get("running"):
+        return jsonify({"ok": False, "message": "Scan läuft bereits"}), 409
+    threading.Thread(target=_do_portfolio_scan, daemon=True).start()
+    return jsonify({"ok": True, "message": "Portfolio-Scan gestartet"})
 
 
 @app.route("/sentiment/api/scan/status")

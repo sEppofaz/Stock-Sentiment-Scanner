@@ -131,6 +131,10 @@ tr:last-child td{border-bottom:none}
 .pf-input:focus{outline:2px solid var(--accent)}
 .btn-pf-add{width:100%;padding:12px;background:var(--accent);color:#fff;border:none;border-radius:12px;font-size:.95rem;font-weight:700;cursor:pointer;margin-top:10px;min-height:46px}
 .btn-pf-add:active{opacity:.8}
+.pf-refresh-bar{display:flex;align-items:center;justify-content:flex-end;margin-bottom:10px}
+#btn-pf-scan{background:var(--accent);color:#fff;border:none;border-radius:9px;padding:7px 14px;font-size:.8rem;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;min-height:34px;transition:opacity .15s}
+#btn-pf-scan:disabled{opacity:.5;cursor:not-allowed}
+#btn-pf-scan:active:not(:disabled){opacity:.8}
 
 /* Portfolio-Karte */
 .pf-card{background:var(--bg2);border-radius:14px;padding:14px;margin-bottom:10px}
@@ -324,6 +328,12 @@ tr:last-child td{border-bottom:none}
         </div>
       </div>
       <button class="btn-pf-add" onclick="addToPortfolio()">+ Hinzufügen</button>
+    </div>
+    <div class="pf-refresh-bar">
+      <button id="btn-pf-scan" onclick="triggerPortfolioScan()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        Jetzt aktualisieren
+      </button>
     </div>
     <div id="pf-list"></div>
     <div id="pf-empty" style="display:none">Noch keine Aktien im Portfolio.</div>
@@ -579,19 +589,43 @@ async function pollScanStatus() {
     const s = await r.json();
     const pb = document.getElementById('progress-bar');
     const btn = document.getElementById('btn-scan');
+    const btnPf = document.getElementById('btn-pf-scan');
     if (s.running) {
       pb.classList.add('show');
       btn.disabled = true;
-      const pct = s.total > 0 ? Math.round(s.progress / s.total * 100) : 0;
+      if (btnPf) btnPf.disabled = true;
+
+      const isLate = s.phase === 'stufe2' || s.phase === 'claude';
+      let pct = s.total > 0 ? Math.round(s.progress / s.total * 100) : 0;
+      if (isLate) pct = 99;
+
       document.getElementById('pb-pct').textContent = pct + '%';
       document.getElementById('pb-fill').style.width = pct + '%';
-      const typeLabel = s.type === 'portfolio' ? 'Portfolio-Scan' : 'Vollständiger Scan';
-      document.getElementById('pb-label').textContent = typeLabel + ' läuft…';
+
+      let phaseLabel = '';
+      if (s.type === 'portfolio') {
+        phaseLabel = 'Portfolio-Scan';
+      } else if (s.phase === 'claude') {
+        phaseLabel = 'Vollscan · KI-Analyse';
+      } else if (s.phase === 'stufe2') {
+        phaseLabel = 'Vollscan · Fundamentaldaten';
+      } else {
+        phaseLabel = 'Vollständiger Scan';
+        // Zeitschätzung während Stufe 1
+        if (s.started_at && s.progress > 50 && s.total > s.progress) {
+          const elapsedMin = (Date.now() - new Date(s.started_at).getTime()) / 60000;
+          const rate = s.progress / elapsedMin;
+          const remMin = Math.ceil((s.total - s.progress) / rate);
+          if (remMin > 0) phaseLabel += ` · ~${remMin} Min`;
+        }
+      }
+      document.getElementById('pb-label').textContent = phaseLabel + ' läuft…';
       document.getElementById('pb-ticker').textContent = s.current_ticker ? '→ ' + s.current_ticker : '';
     } else {
       pb.classList.remove('show');
       btn.disabled = false;
       btn.innerHTML = _SCAN_BTN_HTML;
+      if (btnPf) btnPf.disabled = false;
       if (_statusInterval) {
         clearInterval(_statusInterval);
         _statusInterval = null;
@@ -699,6 +733,11 @@ function showEmpty() {
 }
 
 async function triggerScan() {
+  const day = new Date().getDay();
+  if (day === 0 || day === 6) {
+    alert('Kein Scan am Wochenende – die Börse ist geschlossen.');
+    return;
+  }
   const btn = document.getElementById('btn-scan');
   btn.disabled = true;
   btn.textContent = 'Läuft…';
@@ -713,6 +752,23 @@ async function triggerScan() {
   } catch(e) {
     btn.disabled = false;
     btn.innerHTML = _SCAN_BTN_HTML;
+  }
+}
+
+async function triggerPortfolioScan() {
+  const btn = document.getElementById('btn-pf-scan');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/sentiment/api/portfolio/scan', { method: 'POST' });
+    if (r.status === 409) {
+      btn.textContent = 'Läuft bereits';
+      setTimeout(() => { btn.disabled = false; btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Jetzt aktualisieren'; }, 2000);
+    } else {
+      startPolling();
+      setTimeout(() => loadPortfolio(), 5000);
+    }
+  } catch(e) {
+    btn.disabled = false;
   }
 }
 
