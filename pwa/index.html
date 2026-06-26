@@ -350,6 +350,13 @@ tr:last-child td{border-bottom:none}
           <span class="cfg-slider"></span>
         </label>
       </div>
+      <div class="cfg-row">
+        <span class="cfg-label">KI-Analyse (Claude) aktiv</span>
+        <label class="cfg-toggle">
+          <input type="checkbox" id="cfg-ki-enabled">
+          <span class="cfg-slider"></span>
+        </label>
+      </div>
     </div>
     <div class="cfg-section">
       <div class="cfg-title">Scan-Zeiten (UTC, Mo–Fr)</div>
@@ -940,6 +947,7 @@ async function loadConfig() {
   const f = cfg.filter;
   _scanTimes = cfg.scan_times_utc || [];
   document.getElementById('cfg-scan-enabled').checked = cfg.scan_enabled !== false;
+  document.getElementById('cfg-ki-enabled').checked = cfg.ki_enabled === true;
   renderTimes();
   document.getElementById('cfg-bullish-min').value = f.bullish_pct_min;
   document.getElementById('cfg-bearish-max').value = f.bearish_pct_max;
@@ -971,6 +979,7 @@ function removeTime(i) { _scanTimes.splice(i, 1); renderTimes(); }
 async function saveConfig() {
   const cfg = {
     scan_enabled: document.getElementById('cfg-scan-enabled').checked,
+    ki_enabled: document.getElementById('cfg-ki-enabled').checked,
     scan_times_utc: _scanTimes,
     filter: {
       bullish_pct_min: +document.getElementById('cfg-bullish-min').value,

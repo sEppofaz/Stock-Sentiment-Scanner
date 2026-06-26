@@ -374,7 +374,7 @@ def run_scan(cfg: dict) -> dict:
 
     # Claude-Anreicherung (nur Kandidaten, nur wenn API-Key gesetzt)
     scan_tokens = {"input_tokens": 0, "output_tokens": 0, "candidates": len(candidates)}
-    if candidates and os.environ.get("CLAUDE_API_KEY"):
+    if candidates and cfg.get("ki_enabled", False) and os.environ.get("CLAUDE_API_KEY"):
         SCAN_STATUS["phase"] = "claude"
         _claude_enrich_batch(candidates, scan_tokens)
         log.info("Claude-Analyse: %d Input-, %d Output-Tokens",

@@ -1,5 +1,6 @@
 {
   "scan_enabled": true,
+  "ki_enabled": false,
   "scan_times_utc": ["13:00", "19:30"],
   "filter": {
     "market_cap_max_usd": 2000000000,
