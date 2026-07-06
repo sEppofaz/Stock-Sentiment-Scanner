@@ -99,20 +99,20 @@ def _reschedule():
     cfg = _load_cfg()
     scheduler.remove_all_jobs()
 
-    # Volle Scans (aus config)
+    # Volle Scans (aus config, Zeiten sind UTC – Server-Systemzeit ist Europe/Berlin!)
     for t in cfg.get("scan_times_utc", []):
         h, m = map(int, t.split(":"))
         scheduler.add_job(
             _do_full_scan, "cron",
             hour=h, minute=m, day_of_week="mon-fri",
-            id=f"scan_{h:02d}{m:02d}",
+            timezone="UTC", id=f"scan_{h:02d}{m:02d}",
         )
 
     # Portfolio-Scan: alle 15 Min Mo–Fr 14:00–21:45 UTC (market_open() als Guard)
     scheduler.add_job(
         _do_portfolio_scan, "cron",
         hour="14-21", minute="0,15,30,45", day_of_week="mon-fri",
-        id="portfolio_scan",
+        timezone="UTC", id="portfolio_scan",
     )
 
     # Frühsignale (EARLY_SIGNALS_UMSETZUNG.md)
@@ -121,6 +121,14 @@ def _reschedule():
             _do_edgar_scan, "cron",
             hour="6-22", minute="*/15", day_of_week="mon-fri",
             timezone="America/New_York", id="edgar_scan",
+        )
+        scheduler.add_job(
+            _do_volume_scan, "cron", hour=17, minute=15,
+            day_of_week="mon-fri", timezone="America/New_York", id="volume_scan",
+        )
+        scheduler.add_job(
+            _do_buzz_accel, "cron", hour=17, minute=25,
+            day_of_week="mon-fri", timezone="America/New_York", id="buzz_accel",
         )
 
     log.info(
@@ -167,6 +175,28 @@ def _do_edgar_scan():
         run_edgar_scan(cfg)
     except Exception:
         log.exception("EDGAR-Scan fehlgeschlagen")
+
+
+def _do_volume_scan():
+    cfg = _load_cfg()
+    if not cfg.get("early_signals", {}).get("enabled", False):
+        return
+    try:
+        from layer2_volume import run_volume_scan
+        run_volume_scan(cfg)
+    except Exception:
+        log.exception("Volumen-Scan fehlgeschlagen")
+
+
+def _do_buzz_accel():
+    cfg = _load_cfg()
+    if not cfg.get("early_signals", {}).get("enabled", False):
+        return
+    try:
+        from layer3_buzz import run_buzz_accel
+        run_buzz_accel(cfg)
+    except Exception:
+        log.exception("Buzz-Accel fehlgeschlagen")
 
 
 from signals_db import init_db
