@@ -115,6 +115,14 @@ def _reschedule():
         id="portfolio_scan",
     )
 
+    # Frühsignale (EARLY_SIGNALS_UMSETZUNG.md)
+    if cfg.get("early_signals", {}).get("enabled", False):
+        scheduler.add_job(
+            _do_edgar_scan, "cron",
+            hour="6-22", minute="*/15", day_of_week="mon-fri",
+            timezone="America/New_York", id="edgar_scan",
+        )
+
     log.info(
         "Scan-Zeiten: %s (Mo–Fr UTC) + Portfolio-Scan alle 15 Min 14:00–21:45 UTC",
         cfg.get("scan_times_utc"),
@@ -149,6 +157,20 @@ def _do_portfolio_scan():
     except Exception:
         log.exception("Portfolio-Scan-Fehler")
 
+
+def _do_edgar_scan():
+    cfg = _load_cfg()
+    if not cfg.get("early_signals", {}).get("enabled", False):
+        return
+    try:
+        from layer1_edgar import run_edgar_scan
+        run_edgar_scan(cfg)
+    except Exception:
+        log.exception("EDGAR-Scan fehlgeschlagen")
+
+
+from signals_db import init_db
+init_db()
 
 scheduler.start()
 _reschedule()

@@ -10,3 +10,6 @@ portfolio.json
 claude_costs.json
 config.json
 .env
+signals.db
+signals.db-wal
+signals.db-shm

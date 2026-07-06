@@ -10,5 +10,14 @@
     "buzz_trend_rising": true,
     "news_min_count": 3
   },
-  "top_n_results": 50
+  "top_n_results": 50,
+  "early_signals": {
+    "enabled": false,
+    "insider_min_usd": 25000,
+    "volume_z_min": 2.5,
+    "buzz_rel_accel_min": 1.0,
+    "alert_min_score": 4,
+    "alert_min_types": 2,
+    "alert_cooldown_days": 7
+  }
 }

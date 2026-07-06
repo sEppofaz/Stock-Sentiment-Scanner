@@ -6,6 +6,7 @@ import re
 import time
 import anthropic
 import requests
+from collections import Counter
 from pathlib import Path
 from datetime import datetime
 
@@ -147,7 +148,8 @@ def _fetch_sentiment(ticker: str) -> dict | None:
         count = len(news)
         if count == 0:
             return {"buzz": 0.0, "articles_week": 0, "bullish_pct": 0.0,
-                    "bearish_pct": 0.0, "sentiment_norm": 50.0, "_news_texts": []}
+                    "bearish_pct": 0.0, "sentiment_norm": 50.0, "_news_texts": [],
+                    "_day_counts": {}}
         scores = [
             _score_text((a.get("headline") or "") + " " + (a.get("summary") or ""))
             for a in news
@@ -159,6 +161,11 @@ def _fetch_sentiment(ticker: str) -> dict | None:
         buzz = round(count / 3.0, 3)
         # sentiment_norm: 0–100 (avg_score ∈ [-3,+3] → linear auf 0–100)
         sentiment_norm = round(max(0.0, min(100.0, (avg_score + 3) / 6 * 100)), 1)
+        # Tages-Counts aus Artikel-Timestamps (für buzz_history / Frühsignal-Layer 3)
+        day_counts = Counter(
+            date.fromtimestamp(a["datetime"]).isoformat()
+            for a in news if a.get("datetime")
+        )
         return {
             "buzz": buzz,
             "articles_week": count,
@@ -169,6 +176,7 @@ def _fetch_sentiment(ticker: str) -> dict | None:
                 ((a.get("headline") or "") + " " + (a.get("summary") or ""))[:200]
                 for a in news[:8]
             ],
+            "_day_counts": dict(day_counts),
         }
     except Exception as e:
         log.warning("%s sentiment: %s", ticker, e)
@@ -336,6 +344,7 @@ def run_scan(cfg: dict) -> dict:
     sent_errors = 0
     consecutive_errors = 0
     EARLY_ABORT_THRESHOLD = 50  # Abbruch bei 50 API-Fehlern in Folge
+    buzz_rows: list[tuple] = []  # (ticker, date, news_count, bullish_pct) für buzz_history
 
     for i, t in enumerate(tickers):
         if SCAN_STATUS.get("abort"):
@@ -357,6 +366,13 @@ def run_scan(cfg: dict) -> dict:
         consecutive_errors = 0
         all_scanned[t["ticker"]] = {**t, **sent}
 
+        for day, cnt in sent.get("_day_counts", {}).items():
+            buzz_rows.append((t["ticker"], day, cnt, sent.get("bullish_pct", 0.0)))
+        if len(buzz_rows) >= 500:
+            from signals_db import upsert_buzz_rows
+            upsert_buzz_rows(buzz_rows)
+            buzz_rows = []
+
         # Filter anwenden
         buzz_val = sent["buzz"]
         if f.get("buzz_trend_rising") and buzz_val <= 1.0:
@@ -370,6 +386,11 @@ def run_scan(cfg: dict) -> dict:
 
         candidates.append({**t, **sent})
 
+    if buzz_rows:
+        from signals_db import upsert_buzz_rows
+        upsert_buzz_rows(buzz_rows)
+        buzz_rows = []
+
     log.info("Sentiment-Filter: %d Kandidaten, %d API-Fehler", len(candidates), sent_errors)
 
     # Claude-Anreicherung (nur Kandidaten, nur wenn API-Key gesetzt)
@@ -380,11 +401,13 @@ def run_scan(cfg: dict) -> dict:
         log.info("Claude-Analyse: %d Input-, %d Output-Tokens",
                  scan_tokens["input_tokens"], scan_tokens["output_tokens"])
 
-    # _news_texts aus allen Dicts entfernen (nicht in results.json speichern)
+    # _news_texts/_day_counts aus allen Dicts entfernen (nicht in results.json speichern)
     for c in candidates:
         c.pop("_news_texts", None)
+        c.pop("_day_counts", None)
     for v in all_scanned.values():
         v.pop("_news_texts", None)
+        v.pop("_day_counts", None)
 
     # Stufe 2: MarketCap-Filter (nur für Kandidaten)
     SCAN_STATUS["phase"] = "stufe2"
@@ -524,9 +547,9 @@ def run_portfolio_scan() -> None:
                 entry["sell_reason"] = None
                 changed = True
 
-        # last_sentiment aktualisieren
+        # last_sentiment aktualisieren (_news_texts/_day_counts nie persistieren)
         entry["last_sentiment"] = {
-            **sent,
+            **{k: v for k, v in sent.items() if not k.startswith("_")},
             "price": price,
             "scanned_at": datetime.utcnow().isoformat() + "Z",
         }
