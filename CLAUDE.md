@@ -137,11 +137,15 @@ Zeitschätzung (Min verbleibend) nur während stufe1 wenn progress > 50 Ticker.
 - **Early Abort:** Bei 50 aufeinanderfolgenden API-Fehlern bricht der Scan mit ERROR-Log ab (statt 90 Min zu laufen) – `consecutive_errors`-Counter in `run_scan()`
 - **Frontend `btn-scan`:** Wird durch `pollScanStatus()` verwaltet (disabled während läuft, enabled wenn fertig) – KEIN setTimeout mehr; bei Netzwerkfehler re-enablet der `catch`-Block sofort
 
-## Frühsignal-Layer (geplant, Stand 2026-07-06)
+## Frühsignal-Layer (Phase A live seit 2026-07-06, Phasen B/C offen)
 
 - **`EARLY_SIGNALS_UMSETZUNG.md`** = verbindliche Implementierungs-Spec (Phasen A–C), hat Vorrang vor `EARLY_SIGNALS.md` (Konzept/Begründungen)
 - Kernentscheidungen: yfinance statt Finnhub-Candles (403 Free Tier), APScheduler statt Cron, SQLite `signals.db` (WAL, gitignored), Feature-Flag `early_signals.enabled` in config.json
 - Layer 3 (Buzz-Historie) wird als Hook im bestehenden Vollscan mitgeschrieben – keine neuen API-Calls
+- **Phase A live:** `signals_db.py` + `layer1_edgar.py` (EDGAR-Job alle 15 Min, 6–22 Uhr ET Mo–Fr) + buzz_history-Hook in `run_scan()`
+- **Pitfall EDGAR-Feed:** `type=4` matcht per Präfix auch 424B*/425 → `_feed_entries()` filtert auf Atom `category term == "4"` (keine /A-Amendments)
+- **Pitfall Serverzeit:** Server läuft auf **Europe/Berlin (CEST/CET), NICHT UTC!** APScheduler-Jobs ohne explizite `timezone` laufen in Berlin-Zeit – `scan_times_utc` ist daher faktisch Berlin-Zeit (Altbestand). Neue Jobs immer mit explizitem `timezone`-Parameter anlegen (EDGAR-Job: `America/New_York`)
+- `_day_counts` (wie `_news_texts`) nie persistieren – wird vor results.json/portfolio.json gestrippt
 
 ## tickers.csv erneuern (quartalsweise)
 
