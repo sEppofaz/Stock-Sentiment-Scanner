@@ -130,6 +130,14 @@ def _reschedule():
             _do_buzz_accel, "cron", hour=17, minute=25,
             day_of_week="mon-fri", timezone="America/New_York", id="buzz_accel",
         )
+        scheduler.add_job(
+            _do_es_scoring, "cron", hour=17, minute=35,
+            day_of_week="mon-fri", timezone="America/New_York", id="es_scoring",
+        )
+        scheduler.add_job(
+            _do_fwd_tracker, "cron", hour=17, minute=45,
+            day_of_week="mon-fri", timezone="America/New_York", id="es_tracker",
+        )
 
     log.info(
         "Scan-Zeiten: %s (Mo–Fr UTC) + Portfolio-Scan alle 15 Min 14:00–21:45 UTC",
@@ -197,6 +205,28 @@ def _do_buzz_accel():
         run_buzz_accel(cfg)
     except Exception:
         log.exception("Buzz-Accel fehlgeschlagen")
+
+
+def _do_es_scoring():
+    cfg = _load_cfg()
+    if not cfg.get("early_signals", {}).get("enabled", False):
+        return
+    try:
+        from layer4_scoring import run_scoring
+        run_scoring(cfg)
+    except Exception:
+        log.exception("Frühsignal-Scoring fehlgeschlagen")
+
+
+def _do_fwd_tracker():
+    cfg = _load_cfg()
+    if not cfg.get("early_signals", {}).get("enabled", False):
+        return
+    try:
+        from forward_tracker import run_tracker
+        run_tracker(cfg)
+    except Exception:
+        log.exception("Forward-Tracker fehlgeschlagen")
 
 
 from signals_db import init_db
@@ -422,6 +452,22 @@ def api_status():
         for j in scheduler.get_jobs()
     ]
     return jsonify({"jobs": jobs})
+
+
+@app.route("/sentiment/api/early-signals")
+def api_early_signals():
+    from signals_db import get_conn
+    with get_conn() as conn:
+        signals = [dict(r) for r in conn.execute(
+            "SELECT ticker, signal_type, signal_ts, score, details_json FROM signals "
+            "ORDER BY signal_ts DESC LIMIT 100")]
+        alerts = [dict(r) for r in conn.execute(
+            "SELECT * FROM alerts ORDER BY alert_ts DESC LIMIT 50")]
+        stats = [dict(r) for r in conn.execute(
+            "SELECT horizon_days, COUNT(*) n, AVG(ret_pct) avg_ret, "
+            "SUM(CASE WHEN ret_pct > 0 THEN 1 ELSE 0 END)*100.0/COUNT(*) hit_rate "
+            "FROM forward_returns WHERE ret_pct IS NOT NULL GROUP BY horizon_days")]
+    return jsonify({"signals": signals, "alerts": alerts, "stats": stats})
 
 
 if __name__ == "__main__":
