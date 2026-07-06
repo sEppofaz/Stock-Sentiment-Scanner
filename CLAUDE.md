@@ -137,7 +137,7 @@ Zeitschätzung (Min verbleibend) nur während stufe1 wenn progress > 50 Ticker.
 - **Early Abort:** Bei 50 aufeinanderfolgenden API-Fehlern bricht der Scan mit ERROR-Log ab (statt 90 Min zu laufen) – `consecutive_errors`-Counter in `run_scan()`
 - **Frontend `btn-scan`:** Wird durch `pollScanStatus()` verwaltet (disabled während läuft, enabled wenn fertig) – KEIN setTimeout mehr; bei Netzwerkfehler re-enablet der `catch`-Block sofort
 
-## Frühsignal-Layer (Phase A+B live seit 2026-07-06, Phase C offen)
+## Frühsignal-Layer (Phase A+B+C-Backend live seit 2026-07-06, nur PWA-Tab offen)
 
 - **`EARLY_SIGNALS_UMSETZUNG.md`** = verbindliche Implementierungs-Spec (Phasen A–C), hat Vorrang vor `EARLY_SIGNALS.md` (Konzept/Begründungen)
 - Kernentscheidungen: yfinance statt Finnhub-Candles (403 Free Tier), APScheduler statt Cron, SQLite `signals.db` (WAL, gitignored), Feature-Flag `early_signals.enabled` in config.json
@@ -146,7 +146,9 @@ Zeitschätzung (Min verbleibend) nur während stufe1 wenn progress > 50 Ticker.
 - **Phase B live:** `layer2_volume.py` (Volumen-z-Score via yfinance, 17:15 ET) + `layer3_buzz.py` (Buzz-Beschleunigung aus buzz_history, 17:25 ET, keine API-Calls)
 - **Pitfall EDGAR-Feed:** `type=4` matcht per Präfix auch 424B*/425 → `_feed_entries()` filtert auf Atom `category term == "4"` (keine /A-Amendments)
 - **Pitfall Serverzeit:** Server-Systemzeit ist **Europe/Berlin, NICHT UTC!** APScheduler-Jobs ohne explizite `timezone` liefen in Berlin-Zeit statt UTC (Portfolio-Scan endete real 19:45 statt 21:00 UTC) → **behoben 2026-07-06**: `scan_*`- und `portfolio_scan`-Jobs haben jetzt `timezone="UTC"`. Neue Jobs immer mit explizitem `timezone`-Parameter anlegen (Frühsignal-Jobs: `America/New_York`)
-- **Pitfall yfinance:** `yf.download(tickers=[...], group_by="ticker")` liefert bei Listen-Übergabe IMMER MultiIndex-Spalten (`data[sym]["Volume"]`) – auch bei genau 1 Ticker im Chunk. Keine Sonderfall-Behandlung nötig (abweichend von ursprünglicher Spec-Annahme, verifiziert 2026-07-06)
+- **Phase C (Backend) live:** `layer4_scoring.py` (Kombinations-Scoring + Telegram-Alert, 17:35 ET) + `forward_tracker.py` (füllt forward_returns, 17:45 ET) + Endpoint `/sentiment/api/early-signals` (signals/alerts/stats für den künftigen PWA-Tab)
+- **Offen:** PWA-Tab „Frühsignale" + `ADR-006` + Versionsnummer-Update – siehe `EARLY_SIGNALS_UMSETZUNG.md` Abschnitt 3.5/3.7, in separater Session (Kontextbudget)
+- **Pitfall yfinance:** `yf.download(tickers=[...], group_by="ticker")` liefert bei Listen- UND bei Einzel-String-Übergabe IMMER MultiIndex-Spalten. Bei Liste: `data[sym]["Volume"]` (auch bei 1 Ticker im Chunk). Bei Einzel-Ticker-String (kein `group_by`, wie im Forward-Tracker): `hist["Close"]` ist ein **DataFrame**, nicht Series → `hist["Close"][ticker]` nötig, sonst crasht `float(...)` für jeden Ticker (verifiziert 2026-07-06, Spec hatte hier einen Fehler)
 - `_day_counts` (wie `_news_texts`) nie persistieren – wird vor results.json/portfolio.json gestrippt
 
 ## tickers.csv erneuern (quartalsweise)
