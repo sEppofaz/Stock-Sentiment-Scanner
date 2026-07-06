@@ -137,6 +137,12 @@ Zeitschätzung (Min verbleibend) nur während stufe1 wenn progress > 50 Ticker.
 - **Early Abort:** Bei 50 aufeinanderfolgenden API-Fehlern bricht der Scan mit ERROR-Log ab (statt 90 Min zu laufen) – `consecutive_errors`-Counter in `run_scan()`
 - **Frontend `btn-scan`:** Wird durch `pollScanStatus()` verwaltet (disabled während läuft, enabled wenn fertig) – KEIN setTimeout mehr; bei Netzwerkfehler re-enablet der `catch`-Block sofort
 
+## Frühsignal-Layer (geplant, Stand 2026-07-06)
+
+- **`EARLY_SIGNALS_UMSETZUNG.md`** = verbindliche Implementierungs-Spec (Phasen A–C), hat Vorrang vor `EARLY_SIGNALS.md` (Konzept/Begründungen)
+- Kernentscheidungen: yfinance statt Finnhub-Candles (403 Free Tier), APScheduler statt Cron, SQLite `signals.db` (WAL, gitignored), Feature-Flag `early_signals.enabled` in config.json
+- Layer 3 (Buzz-Historie) wird als Hook im bestehenden Vollscan mitgeschrieben – keine neuen API-Calls
+
 ## tickers.csv erneuern (quartalsweise)
 
 ```bash
