@@ -195,6 +195,29 @@ tr:last-child td{border-bottom:none}
 .costs-scan-date{color:var(--muted)}
 .costs-scan-tokens{color:var(--muted);font-size:.75rem;margin-top:1px}
 
+/* Frühsignale-Tab */
+.es-note{background:var(--bg3);border-radius:10px;padding:10px 12px;font-size:.82rem;color:var(--muted);margin-bottom:16px}
+.es-stats-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px}
+.es-stat-card{background:var(--bg2);border-radius:12px;padding:12px}
+.es-stat-h{font-size:.72rem;color:var(--muted);margin-bottom:6px}
+.es-stat-hit{font-size:1.15rem;font-weight:800}
+.es-stat-ret{font-size:.82rem;margin-top:2px}
+.es-stat-ret.pos{color:var(--green)}
+.es-stat-ret.neg{color:var(--red)}
+.es-stat-n{font-size:.7rem;color:var(--muted);margin-top:4px}
+.es-empty{text-align:center;padding:24px 16px;color:var(--muted);font-size:.9rem}
+.es-alert-card{background:var(--bg2);border-radius:14px;padding:14px;margin-bottom:10px}
+.es-alert-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+.es-alert-ticker{font-size:1rem;font-weight:700}
+.es-alert-score{font-size:1.1rem;font-weight:800;color:var(--accent2)}
+.es-alert-date{font-size:.75rem;color:var(--muted);margin-bottom:8px}
+.es-alert-price{font-size:.8rem;color:var(--muted)}
+.es-signal-item{background:var(--bg2);border-radius:12px;padding:10px 12px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.es-signal-left{display:flex;align-items:center;gap:10px;min-width:0}
+.es-signal-ticker{font-weight:700;flex-shrink:0}
+.es-signal-type{font-size:.8rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.es-signal-date{font-size:.72rem;color:var(--muted);flex-shrink:0}
+
 /* Scroll-to-Top */
 .back-top{position:fixed;bottom:calc(24px + env(safe-area-inset-bottom));right:16px;width:40px;height:40px;border-radius:50%;background:var(--accent);color:#fff;border:none;font-size:20px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.25);display:none;align-items:center;justify-content:center;z-index:200}
 .back-top.vis{display:flex}
@@ -250,6 +273,10 @@ tr:last-child td{border-bottom:none}
     <button class="tab" onclick="switchTab('costs')" id="tab-costs">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
       Kosten
+    </button>
+    <button class="tab" onclick="switchTab('early')" id="tab-early">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      Früh
     </button>
   </div>
 </header>
@@ -443,6 +470,22 @@ tr:last-child td{border-bottom:none}
     </div>
   </div>
 
+  <!-- Frühsignale -->
+  <div class="screen" id="screen-early">
+    <div class="es-note">Validierungsphase — Trefferquote und Rendite sind erst nach 2–3 Monaten aussagekräftig.</div>
+    <div class="section-title">Statistik je Horizont</div>
+    <div class="es-stats-grid" id="es-stats"></div>
+    <div id="es-stats-empty" style="display:none;color:var(--muted);font-size:.85rem;margin-bottom:14px">Noch keine ausgewerteten Forward-Returns.</div>
+
+    <div class="section-title">Alerts</div>
+    <div id="es-alerts"></div>
+    <div id="es-alerts-empty" style="display:none" class="es-empty">Noch keine Alerts ausgelöst.</div>
+
+    <div class="section-title" style="margin-top:18px">Signal-Feed</div>
+    <div id="es-signals"></div>
+    <div id="es-signals-empty" style="display:none" class="es-empty">Noch keine Signale erfasst.</div>
+  </div>
+
 </main>
 
 <button class="back-top" id="back-top" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
@@ -551,8 +594,22 @@ tr:last-child td{border-bottom:none}
         </div>
       </div>
 
+      <!-- Frühsignale -->
+      <div class="info-section">
+        <div class="info-section-title">Frühsignale (Tab „Früh")</div>
+        <p class="info-p">Zusätzlich zum Sentiment-Scan läuft ein zweites, unabhängiges System, das nach Frühindikatoren sucht — Signale, die typischerweise <b>vor</b> einem News-Buzz auftreten:</p>
+        <ul class="info-list">
+          <li><b>Insider-Kauf:</b> SEC-Form-4-Meldungen (EDGAR), gefiltert auf echte Käufe ab $25.000</li>
+          <li><b>Volumen-Anomalie:</b> Handelsvolumen weicht stark vom 20-Tage-Durchschnitt ab (z-Score)</li>
+          <li><b>Buzz-Beschleunigung:</b> Artikelanzahl der letzten 3 Tage steigt sprunghaft gegenüber den 3 Tagen davor — ohne zusätzliche API-Calls, aus den Sentiment-Scan-Daten abgeleitet</li>
+        </ul>
+        <p class="info-p">Ein <b>Alert</b> entsteht erst, wenn mindestens zwei verschiedene Signal-Typen für denselben Ticker innerhalb von 7 Tagen zusammenkommen und ein Mindest-Score erreicht ist. Ein 7-Tage-Cooldown verhindert Alert-Spam pro Ticker.</p>
+        <p class="info-p">Die <b>Statistik je Horizont</b> (1/5/20 Handelstage) zeigt Trefferquote und durchschnittliche Rendite aller bisherigen Alerts — automatisch nachgezogen (Forward-Tracker).</p>
+        <div class="info-disclaimer">Validierungsphase: Die Hypothese, dass diese Frühindikatoren tatsächlich vorhersagekräftig sind, ist unbewiesen. Erst nach 2–3 Monaten Datenhistorie ist die Statistik belastbar. Kein Investment-Advice.</div>
+      </div>
+
       <div class="info-disclaimer">Kein Investment-Advice. Nur Sentiment-Daten aus Medienberichten. Keine Kauf- oder Verkaufsempfehlung.</div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.5 · 2026-06-26</p>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.6 · 2026-07-07</p>
     </div>
   </div>
 </div>
@@ -578,6 +635,7 @@ function refreshCurrent() {
   const tab = document.querySelector('.tab.active')?.id?.replace('tab-', '');
   if (tab === 'dashboard') loadResults();
   else if (tab === 'portfolio') loadPortfolio();
+  else if (tab === 'early') loadEarlySignals();
 }
 
 // ── Scroll-to-Top ─────────────────────────────────────────────────────────
@@ -595,6 +653,7 @@ function switchTab(name) {
   if (name === 'portfolio') loadPortfolio();
   if (name === 'dashboard') loadResults();
   if (name === 'costs') loadCosts();
+  if (name === 'early') loadEarlySignals();
 }
 
 // ── Scan-Status-Polling ───────────────────────────────────────────────────
@@ -952,10 +1011,12 @@ async function resetSignal(ticker) {
 
 // ── Config ────────────────────────────────────────────────────────────────
 let _scanTimes = [];
+let _cfg = {};
 
 async function loadConfig() {
   const r = await fetch('/sentiment/api/config');
   const cfg = await r.json();
+  _cfg = cfg;
   const f = cfg.filter;
   _scanTimes = cfg.scan_times_utc || [];
   document.getElementById('cfg-scan-enabled').checked = cfg.scan_enabled !== false;
@@ -990,6 +1051,7 @@ function removeTime(i) { _scanTimes.splice(i, 1); renderTimes(); }
 
 async function saveConfig() {
   const cfg = {
+    ..._cfg,
     scan_enabled: document.getElementById('cfg-scan-enabled').checked,
     ki_enabled: document.getElementById('cfg-ki-enabled').checked,
     scan_times_utc: _scanTimes,
@@ -1061,6 +1123,85 @@ async function loadCosts() {
   } catch(e) {
     document.getElementById('costs-scan-list').innerHTML =
       '<span style="color:var(--muted)">Fehler beim Laden.</span>';
+  }
+}
+
+// ── Frühsignale ───────────────────────────────────────────────────────────
+const ES_TYPE_LABEL = {
+  insider_buy: 'Insider-Kauf',
+  volume_anomaly: 'Volumen-Anomalie',
+  buzz_accel: 'Buzz-Beschleunigung',
+};
+
+function esFormatDetail(type, d) {
+  if (type === 'insider_buy') {
+    const usd = d.total_usd ? `$${Math.round(d.total_usd).toLocaleString('de-AT')}` : '–';
+    return `${d.owner || '–'} · ${usd}${d.cluster ? ' · Cluster' : ''}`;
+  }
+  if (type === 'volume_anomaly') return `z-Score ${d.z_score ?? '–'}`;
+  if (type === 'buzz_accel') return `+${Math.round((d.rel_accel || 0) * 100)}% Artikel (3T)`;
+  return '';
+}
+
+function esDate(iso) {
+  return new Date(iso).toLocaleString('de-AT', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
+}
+
+async function loadEarlySignals() {
+  try {
+    const r = await fetch('/sentiment/api/early-signals');
+    const d = await r.json();
+
+    const horizons = [1, 5, 20];
+    const statsByH = {};
+    (d.stats || []).forEach(s => statsByH[s.horizon_days] = s);
+    document.getElementById('es-stats-empty').style.display = (d.stats || []).length ? 'none' : 'block';
+    document.getElementById('es-stats').innerHTML = horizons.map(h => {
+      const s = statsByH[h];
+      const hit = s ? `${Math.round(s.hit_rate)}%` : '–';
+      const ret = s ? s.avg_ret : null;
+      const retCls = ret == null ? '' : (ret >= 0 ? 'pos' : 'neg');
+      const retStr = ret == null ? '–' : `${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%`;
+      return `<div class="es-stat-card">
+        <div class="es-stat-h">${h} Handelstage</div>
+        <div class="es-stat-hit">${hit}</div>
+        <div class="es-stat-ret ${retCls}">Ø ${retStr}</div>
+        <div class="es-stat-n">${s ? s.n : 0} Alerts</div>
+      </div>`;
+    }).join('');
+
+    const alerts = d.alerts || [];
+    document.getElementById('es-alerts-empty').style.display = alerts.length ? 'none' : 'block';
+    document.getElementById('es-alerts').innerHTML = alerts.map(a => {
+      let ids = [];
+      try { ids = JSON.parse(a.signal_ids || '[]'); } catch(e) {}
+      const price = a.price_at_alert != null ? `$${a.price_at_alert.toFixed(2)}` : '–';
+      return `<div class="es-alert-card">
+        <div class="es-alert-hd">
+          <span class="es-alert-ticker">${a.ticker}</span>
+          <span class="es-alert-score">${Math.round(a.total_score)}</span>
+        </div>
+        <div class="es-alert-date">${esDate(a.alert_ts)} · ${ids.length} Signale</div>
+        <div class="es-alert-price">Kurs bei Alert: ${price}</div>
+      </div>`;
+    }).join('');
+
+    const signals = d.signals || [];
+    document.getElementById('es-signals-empty').style.display = signals.length ? 'none' : 'block';
+    document.getElementById('es-signals').innerHTML = signals.map(s => {
+      let det = {};
+      try { det = JSON.parse(s.details_json || '{}'); } catch(e) {}
+      return `<div class="es-signal-item">
+        <div class="es-signal-left">
+          <span class="es-signal-ticker">${s.ticker}</span>
+          <span class="es-signal-type">${ES_TYPE_LABEL[s.signal_type] || s.signal_type} · ${esFormatDetail(s.signal_type, det)}</span>
+        </div>
+        <span class="es-signal-date">${esDate(s.signal_ts)}</span>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    document.getElementById('es-signals-empty').style.display = 'block';
+    document.getElementById('es-signals-empty').textContent = 'Fehler beim Laden.';
   }
 }
 
