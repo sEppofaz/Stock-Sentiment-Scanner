@@ -1,8 +1,10 @@
 import os
 import csv
+import html
 import json
 import logging
 import re
+import threading
 import time
 import anthropic
 import requests
@@ -22,6 +24,7 @@ HAIKU_PRICE_OUTPUT = 5.00 / 1_000_000   # USD per output token (Haiku 4.5)
 USD_TO_EUR = 0.92                         # Näherungswert, festgesetzt
 
 _call_times: list[float] = []
+_throttle_lock = threading.Lock()
 _claude_client: anthropic.Anthropic | None = None
 
 
@@ -75,15 +78,18 @@ def _score_text(text: str) -> int:
 
 
 def _throttle():
-    now = time.time()
+    """Globaler Finnhub-Rate-Limit-Guard, threadsicher – mehrere Scheduler-Jobs
+    (Vollscan, EDGAR, Layer2, Layer4) teilen sich dasselbe 55-Calls/Min-Budget."""
     global _call_times
-    _call_times = [t for t in _call_times if now - t < 60]
-    if len(_call_times) >= CALLS_PER_MIN:
-        wait = 61 - (now - _call_times[0])
-        if wait > 0:
-            time.sleep(wait)
-            _call_times = []
-    _call_times.append(time.time())
+    with _throttle_lock:
+        now = time.time()
+        _call_times = [t for t in _call_times if now - t < 60]
+        if len(_call_times) >= CALLS_PER_MIN:
+            wait = 61 - (now - _call_times[0])
+            if wait > 0:
+                time.sleep(wait)
+                _call_times = []
+        _call_times.append(time.time())
 
 
 def _fh_get(path: str, params: dict | None = None) -> dict:
@@ -300,6 +306,7 @@ def _update_claude_costs(token_acc: dict) -> None:
         "cost_usd":           round(cost_usd, 6),
         "cost_eur":           round(cost_eur, 6),
     })
+    data["scans"] = data["scans"][-200:]  # Cap gegen unbegrenztes Wachstum (M8)
 
     new_threshold = int(data["total_cost_eur"])
     if new_threshold > data["last_threshold_notified"]:
@@ -323,13 +330,29 @@ def run_scan(cfg: dict) -> dict:
         log.warning("run_scan aufgerufen während Scan läuft – abgebrochen")
         return {}
     SCAN_STATUS.update({
-        "running": True, "type": "full",
+        "running": True, "type": "full", "abort": False,
         "started_at": datetime.utcnow().isoformat() + "Z",
         "progress": 0, "total": 0,
         "current_ticker": "", "finished_at": None,
         "phase": "stufe1",
     })
 
+    try:
+        output = _run_scan_inner(cfg)
+        return output
+    finally:
+        # Läuft IMMER, auch bei Exceptions – sonst bleibt running=True für immer
+        # hängen und alle künftigen Scans (Voll + Portfolio + manuell) werden
+        # bis zum Service-Neustart stillschweigend übersprungen.
+        SCAN_STATUS.update({
+            "running": False,
+            "abort": False,
+            "finished_at": datetime.utcnow().isoformat() + "Z",
+            "current_ticker": "",
+        })
+
+
+def _run_scan_inner(cfg: dict) -> dict:
     f = cfg["filter"]
     tickers = _load_tickers()
     portfolio = _load_portfolio()
@@ -393,85 +416,100 @@ def run_scan(cfg: dict) -> dict:
 
     log.info("Sentiment-Filter: %d Kandidaten, %d API-Fehler", len(candidates), sent_errors)
 
-    # Claude-Anreicherung (nur Kandidaten, nur wenn API-Key gesetzt)
+    aborted = SCAN_STATUS.get("abort", False)
     scan_tokens = {"input_tokens": 0, "output_tokens": 0, "candidates": len(candidates)}
-    if candidates and cfg.get("ki_enabled", False) and os.environ.get("CLAUDE_API_KEY"):
-        SCAN_STATUS["phase"] = "claude"
-        _claude_enrich_batch(candidates, scan_tokens)
-        log.info("Claude-Analyse: %d Input-, %d Output-Tokens",
-                 scan_tokens["input_tokens"], scan_tokens["output_tokens"])
-
-    # _news_texts/_day_counts aus allen Dicts entfernen (nicht in results.json speichern)
-    for c in candidates:
-        c.pop("_news_texts", None)
-        c.pop("_day_counts", None)
-    for v in all_scanned.values():
-        v.pop("_news_texts", None)
-        v.pop("_day_counts", None)
-
-    # Stufe 2: MarketCap-Filter (nur für Kandidaten)
-    SCAN_STATUS["phase"] = "stufe2"
+    top_n: list[dict] = []
     valid: list[dict] = []
-    mc_errors = 0
-    for c in candidates:
-        SCAN_STATUS["current_ticker"] = c["ticker"]
-        try:
-            m = _fh_get("/stock/metric", {"symbol": c["ticker"], "metric": "all"})
-            metrics = m.get("metric") or {}
-            mc_m = metrics.get("marketCapitalization")
-            pe = metrics.get("peNormalizedAnnual")
 
-            if mc_m is not None:
-                mc_usd = mc_m * 1_000_000
-                if not (f["market_cap_min_usd"] <= mc_usd <= f["market_cap_max_usd"]):
-                    continue
-                c["market_cap"] = int(mc_usd)
+    if aborted:
+        log.warning(
+            "Scan abgebrochen bei %d/%d Tickern (%d Kandidaten gesammelt) – "
+            "überspringe Claude-Anreicherung, Stufe 2 und Ergebnis-Schreiben",
+            SCAN_STATUS.get("progress", 0), len(tickers), len(candidates),
+        )
+    else:
+        # Claude-Anreicherung (nur Kandidaten, nur wenn API-Key gesetzt)
+        if candidates and cfg.get("ki_enabled", False) and os.environ.get("CLAUDE_API_KEY"):
+            SCAN_STATUS["phase"] = "claude"
+            _claude_enrich_batch(candidates, scan_tokens)
+            log.info("Claude-Analyse: %d Input-, %d Output-Tokens",
+                     scan_tokens["input_tokens"], scan_tokens["output_tokens"])
+
+        # _news_texts/_day_counts aus allen Dicts entfernen (nicht in results.json speichern)
+        for c in candidates:
+            c.pop("_news_texts", None)
+            c.pop("_day_counts", None)
+        for v in all_scanned.values():
+            v.pop("_news_texts", None)
+            v.pop("_day_counts", None)
+
+        # Stufe 2: MarketCap-Filter (nur für Kandidaten)
+        SCAN_STATUS["phase"] = "stufe2"
+        mc_errors = 0
+        for c in candidates:
+            SCAN_STATUS["current_ticker"] = c["ticker"]
+            try:
+                m = _fh_get("/stock/metric", {"symbol": c["ticker"], "metric": "all"})
+                metrics = m.get("metric") or {}
+                mc_m = metrics.get("marketCapitalization")
+                pe = metrics.get("peNormalizedAnnual")
+
+                if mc_m is not None:
+                    mc_usd = mc_m * 1_000_000
+                    if not (f["market_cap_min_usd"] <= mc_usd <= f["market_cap_max_usd"]):
+                        continue
+                    c["market_cap"] = int(mc_usd)
+                else:
+                    c["market_cap"] = None
+
+                c["pe"] = pe
+                valid.append(c)
+            except Exception as e:
+                mc_errors += 1
+                log.debug("%s metric: %s", c["ticker"], e)
+
+        log.info("MarketCap-Filter: %d Treffer, %d Fehler", len(valid), mc_errors)
+
+        for v in valid:
+            v["score"] = _calc_score(v)
+
+        valid.sort(key=lambda x: x["score"], reverse=True)
+        top_n = valid[: cfg.get("top_n_results", 50)]
+        top_tickers = {r["ticker"] for r in top_n}
+
+        # Portfolio-Aktien immer in Top N aufnehmen (pinned)
+        for pt in portfolio_tickers:
+            if pt in top_tickers:
+                # Schon drin → als pinned markieren
+                for r in top_n:
+                    if r["ticker"] == pt:
+                        r["pinned"] = True
             else:
-                c["market_cap"] = None
-
-            c["pe"] = pe
-            valid.append(c)
-        except Exception as e:
-            mc_errors += 1
-            log.debug("%s metric: %s", c["ticker"], e)
-
-    log.info("MarketCap-Filter: %d Treffer, %d Fehler", len(valid), mc_errors)
-
-    for v in valid:
-        v["score"] = _calc_score(v)
-
-    valid.sort(key=lambda x: x["score"], reverse=True)
-    top_n = valid[: cfg.get("top_n_results", 50)]
-    top_tickers = {r["ticker"] for r in top_n}
-
-    # Portfolio-Aktien immer in Top N aufnehmen (pinned)
-    for pt in portfolio_tickers:
-        if pt in top_tickers:
-            # Schon drin → als pinned markieren
-            for r in top_n:
-                if r["ticker"] == pt:
-                    r["pinned"] = True
-        else:
-            # Nicht in Top N → forcieren, Daten aus all_scanned oder neu holen
-            base = all_scanned.get(pt)
-            if base is None:
-                sent = _fetch_sentiment(pt)
-                if sent:
-                    pname = next((p["name"] for p in portfolio if p["ticker"] == pt), pt)
-                    base = {"ticker": pt, "name": pname, **sent}
-            if base:
-                try:
-                    m = _fh_get("/stock/metric", {"symbol": pt, "metric": "all"})
-                    metrics = m.get("metric") or {}
-                    mc_m = metrics.get("marketCapitalization")
-                    base["market_cap"] = int(mc_m * 1_000_000) if mc_m else None
-                    base["pe"] = metrics.get("peNormalizedAnnual")
-                except Exception:
-                    base["market_cap"] = None
-                    base["pe"] = None
-                base["score"] = _calc_score(base)
-                base["pinned"] = True
-                top_n.append(base)
+                # Nicht in Top N → forcieren, Daten aus all_scanned oder neu holen
+                base = all_scanned.get(pt)
+                if base is None:
+                    sent = _fetch_sentiment(pt)
+                    if sent:
+                        pname = next((p["name"] for p in portfolio if p["ticker"] == pt), pt)
+                        base = {"ticker": pt, "name": pname, **sent}
+                if base:
+                    try:
+                        m = _fh_get("/stock/metric", {"symbol": pt, "metric": "all"})
+                        metrics = m.get("metric") or {}
+                        mc_m = metrics.get("marketCapitalization")
+                        base["market_cap"] = int(mc_m * 1_000_000) if mc_m else None
+                        base["pe"] = metrics.get("peNormalizedAnnual")
+                    except Exception:
+                        base["market_cap"] = None
+                        base["pe"] = None
+                    base["score"] = _calc_score(base)
+                    base["pinned"] = True
+                    # _news_texts/_day_counts stripen (base kann aus einem frischen
+                    # _fetch_sentiment()-Call stammen statt aus dem bereits
+                    # gestripten all_scanned) – nie in results.json persistieren
+                    base.pop("_news_texts", None)
+                    base.pop("_day_counts", None)
+                    top_n.append(base)
 
     output = {
         "scanned_at": datetime.utcnow().isoformat() + "Z",
@@ -481,23 +519,23 @@ def run_scan(cfg: dict) -> dict:
         "errors": sent_errors,
         "results": top_n,
     }
-    _write_results(output)
 
-    # Portfolio-Quote und Wert aktualisieren
-    _update_portfolio_quotes(portfolio)
+    if aborted:
+        log.warning("Scan abgebrochen – results.json bleibt unverändert (letztes gutes Ergebnis erhalten), kein Telegram-Versand")
+    else:
+        _write_results(output)
+        _send_telegram_top5(top_n[:5], len(tickers))
 
-    log.info("Vollständiger Scan fertig – %d Ergebnisse", len(top_n))
-    _send_telegram_top5(top_n[:5], len(tickers))
+    # Portfolio-Quote und Wert aktualisieren – frisch von der Platte laden,
+    # da der Scan bis zu 90 Min läuft und in der Zwischenzeit hinzugefügte/
+    # gelöschte Aktien oder gesetzte Sell-Signale sonst überschrieben würden.
+    _update_portfolio_quotes(_load_portfolio())
+
+    log.info("Vollständiger Scan fertig – %d Ergebnisse (aborted=%s)", len(top_n), aborted)
 
     if scan_tokens["input_tokens"] > 0:
         _update_claude_costs(scan_tokens)
 
-    SCAN_STATUS.update({
-        "running": False,
-        "abort": False,
-        "finished_at": datetime.utcnow().isoformat() + "Z",
-        "current_ticker": "",
-    })
     return output
 
 
@@ -506,21 +544,42 @@ def run_scan(cfg: dict) -> dict:
 def run_portfolio_scan() -> None:
     """Nur Portfolio-Aktien scannen, Alert bei gedrehter Stimmung."""
     global SCAN_STATUS
+    if SCAN_STATUS.get("running"):
+        log.info("Portfolio-Scan übersprungen – anderer Scan läuft bereits")
+        return
+
     portfolio = _load_portfolio()
     if not portfolio:
         return
 
     SCAN_STATUS.update({
-        "running": True, "type": "portfolio",
+        "running": True, "type": "portfolio", "abort": False,
         "started_at": datetime.utcnow().isoformat() + "Z",
         "progress": 0, "total": len(portfolio),
         "current_ticker": "", "finished_at": None,
     })
 
+    try:
+        _run_portfolio_scan_inner(portfolio)
+    finally:
+        # Läuft IMMER, auch bei Exceptions – siehe run_scan()
+        SCAN_STATUS.update({
+            "running": False,
+            "abort": False,
+            "finished_at": datetime.utcnow().isoformat() + "Z",
+            "current_ticker": "",
+        })
+
+
+def _run_portfolio_scan_inner(portfolio: list[dict]) -> None:
     log.info("Portfolio-Scan gestartet: %d Aktien", len(portfolio))
     changed = False
 
     for i, entry in enumerate(portfolio):
+        if SCAN_STATUS.get("abort"):
+            log.info("Portfolio-Scan durch Benutzer abgebrochen bei %d/%d", i, len(portfolio))
+            break
+
         ticker = entry["ticker"]
         SCAN_STATUS["progress"] = i + 1
         SCAN_STATUS["current_ticker"] = ticker
@@ -564,11 +623,6 @@ def run_portfolio_scan() -> None:
     if changed:
         _save_portfolio(portfolio)
 
-    SCAN_STATUS.update({
-        "running": False,
-        "finished_at": datetime.utcnow().isoformat() + "Z",
-        "current_ticker": "",
-    })
     log.info("Portfolio-Scan fertig")
 
 
@@ -608,11 +662,15 @@ def _tg_post(text: str):
         log.warning("Telegram: TOKEN oder CHAT_ID fehlt")
         return
     try:
-        requests.post(
+        r = requests.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
             json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
             timeout=15,
         )
+        if not r.ok:
+            # z.B. kaputtes HTML durch ungeschätzte externe Namen (Company-Name,
+            # Insider-Owner) → Telegram 400, Alert ging sonst stumm verloren
+            log.warning("Telegram-Fehler %s: %s", r.status_code, r.text[:200])
     except Exception as e:
         log.warning("Telegram-Fehler: %s", e)
 
@@ -625,7 +683,7 @@ def _send_telegram_top5(top5: list, scanned: int):
     for i, r in enumerate(top5, 1):
         mc = f"${r['market_cap'] // 1_000_000}M" if r.get("market_cap") else "–"
         lines.append(
-            f"{i}. <b>{r['ticker']}</b> — {r['name']}\n"
+            f"{i}. <b>{html.escape(r['ticker'])}</b> — {html.escape(r.get('name') or '')}\n"
             f"   Score: {r['score']} | Bullish: {r['bullish_pct']}% | Buzz: {r['buzz']:.2f}↑\n"
             f"   MarketCap: {mc} | {r['articles_week']} News (7d)"
         )
@@ -644,9 +702,9 @@ def _send_telegram_sell(entry: dict, sent: dict, price: float | None, reason: st
     pnl_str = f"{'+'if pnl >= 0 else ''}{pnl:.2f} USD" if pnl is not None else "–"
 
     text = (
-        f"🔴 <b>VERKAUFSEMPFEHLUNG: {ticker}</b>\n"
-        f"{name}\n\n"
-        f"<b>Grund:</b> {reason}\n\n"
+        f"🔴 <b>VERKAUFSEMPFEHLUNG: {html.escape(ticker)}</b>\n"
+        f"{html.escape(name)}\n\n"
+        f"<b>Grund:</b> {html.escape(reason)}\n\n"
         f"Bullish: {sent['bullish_pct']}% | Bearish: {sent['bearish_pct']}% | Buzz: {sent['buzz']:.2f}\n"
         f"Aktueller Kurs: {'$'+f'{price:.2f}' if price else '–'}\n"
         f"Positionswert: {curr_val} | P&L: {pnl_str}\n\n"

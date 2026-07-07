@@ -1,4 +1,5 @@
 """Layer 4: Kombinations-Scoring + Telegram-Alert. Läuft 1x täglich nach den EOD-Layern."""
+import html
 import json
 import logging
 from datetime import datetime, timezone
@@ -19,7 +20,7 @@ def run_scoring(cfg: dict) -> None:
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT id, ticker, signal_type, signal_ts, score, details_json FROM signals "
-            "WHERE signal_ts >= datetime('now', '-7 days')").fetchall()
+            "WHERE signal_ts >= strftime('%Y-%m-%dT%H:%M:%S', 'now', '-7 days')").fetchall()
     by_ticker: dict[str, list] = {}
     for r in rows:
         by_ticker.setdefault(r["ticker"], []).append(r)
@@ -46,7 +47,7 @@ def run_scoring(cfg: dict) -> None:
 
         with get_conn() as conn:
             recent_alert = conn.execute(
-                "SELECT 1 FROM alerts WHERE ticker=? AND alert_ts >= datetime('now', ?)",
+                "SELECT 1 FROM alerts WHERE ticker=? AND alert_ts >= strftime('%Y-%m-%dT%H:%M:%S', 'now', ?)",
                 (ticker, f"-{cooldown} days")).fetchone()
         if recent_alert:
             continue
@@ -59,15 +60,19 @@ def run_scoring(cfg: dict) -> None:
                 "VALUES (?, ?, ?, ?, ?)",
                 (ticker, now_iso, total, json.dumps(sig_ids), price))
             alert_id = cur.lastrowid
-            conn.executemany(
-                "INSERT OR IGNORE INTO forward_returns (alert_id, horizon_days) VALUES (?, ?)",
-                [(alert_id, h) for h in (1, 5, 20)])
+            if price is not None:
+                # Ohne price_at_alert kann forward_tracker nie eine Rendite
+                # berechnen (Division durch fehlende Baseline) – ohne Preis
+                # keine Zeilen anlegen, sonst bleiben sie für immer tot (G7)
+                conn.executemany(
+                    "INSERT OR IGNORE INTO forward_returns (alert_id, horizon_days) VALUES (?, ?)",
+                    [(alert_id, h) for h in (1, 5, 20)])
 
-        lines = [f"🔮 <b>Frühsignal: {ticker}</b> — Score {total:.0f}"]
+        lines = [f"🔮 <b>Frühsignal: {html.escape(ticker)}</b> — Score {total:.0f}"]
         for s in sorted(sigs, key=lambda x: x["signal_ts"]):
             d = json.loads(s["details_json"] or "{}")
             if s["signal_type"] == "insider_buy":
-                extra = d.get("filing_url", "")
+                extra = html.escape(d.get("filing_url", ""))
             elif s["signal_type"] == "volume_anomaly":
                 extra = f"z={d.get('z_score')}"
             else:

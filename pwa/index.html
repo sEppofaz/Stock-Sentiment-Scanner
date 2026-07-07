@@ -609,12 +609,21 @@ tr:last-child td{border-bottom:none}
       </div>
 
       <div class="info-disclaimer">Kein Investment-Advice. Nur Sentiment-Daten aus Medienberichten. Keine Kauf- oder Verkaufsempfehlung.</div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.7 · 2026-07-07</p>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.8 · 2026-07-07</p>
     </div>
   </div>
 </div>
 
 <script>
+// ── HTML-Escaping (M6) ───────────────────────────────────────────────────
+// Externe/unauthentifiziert schreibbare Textfelder (Firmenname, Insider-Owner
+// aus SEC-Filings, Sell-Reason) landen sonst ungefiltert in innerHTML.
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
 // ── Pull-to-Refresh ───────────────────────────────────────────────────────
 const ptrEl = document.getElementById('ptr');
 let ptrStartY = 0, ptrActive = false;
@@ -764,13 +773,13 @@ function renderResults() {
     const sell = r.sell_signal;
     const pinned = r.pinned;
     return `<div class="result-card${sell?' sell-signal':pinned?' pinned':''}">
-      ${sell ? `<div class="sell-banner">🔴 Verkaufsempfehlung: ${r.sell_reason || 'Sentiment gedreht'}</div>` : ''}
+      ${sell ? `<div class="sell-banner">🔴 Verkaufsempfehlung: ${esc(r.sell_reason || 'Sentiment gedreht')}</div>` : ''}
       <div class="rc-header">
         <span class="rc-rank">#${i+1}${pinned?' 📌':''}</span>
-        <span class="rc-ticker">${r.ticker}</span>
+        <span class="rc-ticker">${esc(r.ticker)}</span>
         <span class="rc-score${sell?' sell':''}">${r.score}</span>
       </div>
-      <div class="rc-name">${r.name||'–'}</div>
+      <div class="rc-name">${esc(r.name)||'–'}</div>
       <div class="rc-chips">
         <span class="chip${sell?' red':' green'}">↑ Bullish ${r.bullish_pct}%</span>
         <span class="chip">Buzz ${r.buzz.toFixed(2)}</span>
@@ -787,8 +796,8 @@ function renderResults() {
     const rowCls = sell ? 'sell-row' : pinned ? 'pinned-row' : '';
     return `<tr class="${rowCls}">
       <td>${i+1}${pinned?' 📌':''}</td>
-      <td class="td-ticker">${r.ticker}</td>
-      <td>${r.name||'–'}</td>
+      <td class="td-ticker">${esc(r.ticker)}</td>
+      <td>${esc(r.name)||'–'}</td>
       <td class="td-score${sell?' sell':''}">${r.score}</td>
       <td>${r.bullish_pct}%</td>
       <td>${r.buzz.toFixed(2)}</td>
@@ -823,6 +832,7 @@ async function triggerScan() {
     const r = await fetch('/sentiment/api/scan', { method: 'POST' });
     if (r.status === 409) {
       btn.textContent = 'Läuft bereits';
+      startPolling(); // G6: Button blieb sonst bis Tab-Wechsel/Reload auf "Läuft bereits" hängen
     } else {
       document.getElementById('status-text').innerHTML = '<b>Scan gestartet</b> – dauert ca. 30–90 Min.';
       startPolling();
@@ -862,8 +872,8 @@ async function acQuery(q) {
   if (!_acResults.length) { list.classList.remove('show'); return; }
   list.innerHTML = _acResults.map((t, i) =>
     `<div class="pf-ac-item" data-i="${i}" onclick="acSelect(${i})">
-      <div class="pf-ac-ticker">${t.ticker}</div>
-      <div class="pf-ac-name">${t.name}</div>
+      <div class="pf-ac-ticker">${esc(t.ticker)}</div>
+      <div class="pf-ac-name">${esc(t.name)}</div>
     </div>`
   ).join('');
   list.classList.add('show');
@@ -954,11 +964,11 @@ async function loadPortfolio() {
       : '–';
 
     return `<div class="pf-card${sell?' sell-signal':''}">
-      ${sell ? `<div class="pf-sell-banner">🔴 <b>Verkaufsempfehlung:</b> ${p.sell_reason || 'Stimmung gedreht'}</div>` : ''}
+      ${sell ? `<div class="pf-sell-banner">🔴 <b>Verkaufsempfehlung:</b> ${esc(p.sell_reason || 'Stimmung gedreht')}</div>` : ''}
       <div class="pf-card-hd">
         <div>
-          <div class="pf-card-ticker">${p.ticker}</div>
-          <div class="pf-card-name">${p.name || '–'}</div>
+          <div class="pf-card-ticker">${esc(p.ticker)}</div>
+          <div class="pf-card-name">${esc(p.name)||'–'}</div>
         </div>
         <div style="font-size:.75rem;color:var(--muted);text-align:right">
           ${p.shares} Aktien<br>Stand: ${sentAt}
@@ -1136,7 +1146,7 @@ const ES_TYPE_LABEL = {
 function esFormatDetail(type, d) {
   if (type === 'insider_buy') {
     const usd = d.total_usd ? `$${Math.round(d.total_usd).toLocaleString('de-AT')}` : '–';
-    return `${d.owner || '–'} · ${usd}${d.cluster ? ' · Cluster' : ''}`;
+    return `${esc(d.owner)||'–'} · ${usd}${d.cluster ? ' · Cluster' : ''}`;
   }
   if (type === 'volume_anomaly') return `z-Score ${d.z_score ?? '–'}`;
   if (type === 'buzz_accel') return `+${Math.round((d.rel_accel || 0) * 100)}% Artikel (3T)`;
@@ -1178,7 +1188,7 @@ async function loadEarlySignals() {
       const price = a.price_at_alert != null ? `$${a.price_at_alert.toFixed(2)}` : '–';
       return `<div class="es-alert-card">
         <div class="es-alert-hd">
-          <span class="es-alert-ticker">${a.ticker}</span>
+          <span class="es-alert-ticker">${esc(a.ticker)}</span>
           <span class="es-alert-score">${Math.round(a.total_score)}</span>
         </div>
         <div class="es-alert-date">${esDate(a.alert_ts)} · ${ids.length} Signale</div>
@@ -1193,8 +1203,8 @@ async function loadEarlySignals() {
       try { det = JSON.parse(s.details_json || '{}'); } catch(e) {}
       return `<div class="es-signal-item">
         <div class="es-signal-left">
-          <span class="es-signal-ticker">${s.ticker}</span>
-          <span class="es-signal-type">${ES_TYPE_LABEL[s.signal_type] || s.signal_type} · ${esFormatDetail(s.signal_type, det)}</span>
+          <span class="es-signal-ticker">${esc(s.ticker)}</span>
+          <span class="es-signal-type">${esc(ES_TYPE_LABEL[s.signal_type] || s.signal_type)} · ${esFormatDetail(s.signal_type, det)}</span>
         </div>
         <span class="es-signal-date">${esDate(s.signal_ts)}</span>
       </div>`;

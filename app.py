@@ -2,9 +2,12 @@ import os
 import csv
 import json
 import logging
+import logging.handlers
+import re
 import threading
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from flask import Flask, jsonify, request, send_file, Response
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -15,7 +18,10 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     handlers=[
-        logging.FileHandler(BASE_DIR / "scan.log"),
+        # Rotierend statt unbegrenzt wachsend (M8): 5 MB x 3 Backups
+        logging.handlers.RotatingFileHandler(
+            BASE_DIR / "scan.log", maxBytes=5_000_000, backupCount=3
+        ),
         logging.StreamHandler(),
     ],
 )
@@ -62,6 +68,38 @@ def _load_cfg() -> dict:
     return json.loads(path.read_text())
 
 
+_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+def _validate_cfg(cfg) -> str | None:
+    """Gibt eine Fehlermeldung zurück wenn cfg ungültig ist, sonst None.
+
+    Verhindert, dass eine kaputte Config geschrieben wird, die _reschedule()
+    beim nächsten Service-Neustart crashen lässt (M7: Config-Validierung).
+    """
+    if not isinstance(cfg, dict):
+        return "Config muss ein Objekt sein"
+
+    times = cfg.get("scan_times_utc", [])
+    if not isinstance(times, list) or not all(
+        isinstance(t, str) and _TIME_RE.match(t) for t in times
+    ):
+        return "scan_times_utc muss eine Liste von 'HH:MM'-Strings sein"
+
+    f = cfg.get("filter", {})
+    if not isinstance(f, dict):
+        return "filter muss ein Objekt sein"
+    for key in ("bullish_pct_min", "bearish_pct_max", "news_min_count",
+                "market_cap_min_usd", "market_cap_max_usd"):
+        if key in f and not isinstance(f[key], (int, float)):
+            return f"filter.{key} muss numerisch sein"
+
+    if "top_n_results" in cfg and not isinstance(cfg["top_n_results"], (int, float)):
+        return "top_n_results muss numerisch sein"
+
+    return None
+
+
 # ── Portfolio ─────────────────────────────────────────────────────────────────
 
 def _load_portfolio() -> list[dict]:
@@ -83,13 +121,21 @@ def _save_portfolio(data: list[dict]):
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 
+NYSE_TZ = ZoneInfo("America/New_York")
+
+
 def _market_open() -> bool:
-    """True wenn NYSE/NASDAQ geöffnet (Mo–Fr 14:30–21:00 UTC)."""
-    now = datetime.utcnow()
+    """True wenn NYSE/NASDAQ geöffnet (Mo–Fr 9:30–16:00 America/New_York).
+
+    DST-sicher über zoneinfo statt fixer UTC-Grenzen – die alte Version
+    (14:30–21:00 UTC) war nur im Winter (EST) korrekt; im Sommer (EDT,
+    z.B. Juli) fehlte dadurch die erste Handelsstunde (13:30–14:30 UTC).
+    """
+    now = datetime.now(NYSE_TZ)
     if now.weekday() >= 5:
         return False
     t = now.hour * 60 + now.minute
-    return 870 <= t <= 1260  # 14:30=870, 21:00=1260
+    return 570 <= t <= 960  # 9:30=570, 16:00=960
 
 
 scheduler = BackgroundScheduler()
@@ -100,19 +146,31 @@ def _reschedule():
     scheduler.remove_all_jobs()
 
     # Volle Scans (aus config, Zeiten sind UTC – Server-Systemzeit ist Europe/Berlin!)
+    # Pro Eintrag try/except: eine manuell kaputt editierte config.json soll nicht
+    # ALLE Jobs (inkl. Portfolio-Scan + Frühsignale) mit reißen (M7).
     for t in cfg.get("scan_times_utc", []):
-        h, m = map(int, t.split(":"))
-        scheduler.add_job(
-            _do_full_scan, "cron",
-            hour=h, minute=m, day_of_week="mon-fri",
-            timezone="UTC", id=f"scan_{h:02d}{m:02d}",
-        )
+        try:
+            h, m = map(int, t.split(":"))
+            scheduler.add_job(
+                _do_full_scan, "cron",
+                hour=h, minute=m, day_of_week="mon-fri",
+                timezone="UTC", id=f"scan_{h:02d}{m:02d}",
+            )
+        except Exception:
+            log.exception("Ungültige Scan-Zeit übersprungen: %r", t)
 
-    # Portfolio-Scan: alle 15 Min Mo–Fr 14:00–21:45 UTC (market_open() als Guard)
+    # Portfolio-Scan: alle 15 Min Mo–Fr 9:00–16:45 America/New_York
+    # (DST-sicher; _market_open()-Guard grenzt auf die echte Handelszeit 9:30–16:00 ein)
     scheduler.add_job(
         _do_portfolio_scan, "cron",
-        hour="14-21", minute="0,15,30,45", day_of_week="mon-fri",
-        timezone="UTC", id="portfolio_scan",
+        hour="9-16", minute="0,15,30,45", day_of_week="mon-fri",
+        timezone="America/New_York", id="portfolio_scan",
+    )
+
+    # Tägliches Cleanup alter buzz_history/edgar_seen-Zeilen (M8) – unabhängig
+    # von early_signals.enabled, da buzz_history immer aus dem Vollscan befüllt wird
+    scheduler.add_job(
+        _do_cleanup, "cron", hour=3, minute=0, timezone="UTC", id="daily_cleanup",
     )
 
     # Frühsignale (EARLY_SIGNALS_UMSETZUNG.md)
@@ -140,7 +198,7 @@ def _reschedule():
         )
 
     log.info(
-        "Scan-Zeiten: %s (Mo–Fr UTC) + Portfolio-Scan alle 15 Min 14:00–21:45 UTC",
+        "Scan-Zeiten: %s (Mo–Fr UTC) + Portfolio-Scan alle 15 Min 9:00–16:45 America/New_York",
         cfg.get("scan_times_utc"),
     )
 
@@ -227,6 +285,16 @@ def _do_fwd_tracker():
         run_tracker(cfg)
     except Exception:
         log.exception("Forward-Tracker fehlgeschlagen")
+
+
+def _do_cleanup():
+    try:
+        from signals_db import cleanup_old_data
+        buzz_deleted, edgar_deleted = cleanup_old_data()
+        log.info("Cleanup: %d buzz_history- + %d edgar_seen-Zeilen entfernt (>60/>30 Tage)",
+                  buzz_deleted, edgar_deleted)
+    except Exception:
+        log.exception("Cleanup fehlgeschlagen")
 
 
 from signals_db import init_db
@@ -327,6 +395,9 @@ def api_config_get():
 @app.route("/sentiment/api/config", methods=["POST"])
 def api_config_set():
     cfg = request.get_json(force=True)
+    err = _validate_cfg(cfg)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
     (BASE_DIR / "config.json").write_text(
         json.dumps(cfg, indent=2, ensure_ascii=False)
     )
@@ -363,12 +434,19 @@ def api_portfolio_get():
     return jsonify(_load_portfolio())
 
 
+_TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
+
+
 @app.route("/sentiment/api/portfolio", methods=["POST"])
 def api_portfolio_add():
     body = request.get_json(force=True)
     ticker = body.get("ticker", "").strip().upper()
     if not ticker:
         return jsonify({"error": "ticker fehlt"}), 400
+    if not _TICKER_RE.match(ticker):
+        # Verhindert u.a. dass Sonderzeichen (Anführungszeichen etc.) über den
+        # Ticker in onclick-Handler im Frontend landen (M6, XSS-Härtung)
+        return jsonify({"error": "ticker ungültig"}), 400
 
     portfolio = _load_portfolio()
 
@@ -376,11 +454,17 @@ def api_portfolio_add():
     if any(p["ticker"] == ticker for p in portfolio):
         return jsonify({"error": "Ticker bereits im Portfolio"}), 409
 
+    try:
+        shares = float(body.get("shares", 0))
+        buy_price = float(body.get("buy_price", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "shares/buy_price müssen numerisch sein"}), 400
+
     entry = {
         "ticker": ticker,
         "name": body.get("name", ""),
-        "shares": float(body.get("shares", 0)),
-        "buy_price": float(body.get("buy_price", 0)),
+        "shares": shares,
+        "buy_price": buy_price,
         "buy_date": body.get("buy_date", ""),
         "last_sentiment": None,
         "current_price": None,

@@ -16,17 +16,24 @@ MIN_HISTORY = 21       # 20 Tage Basis + heutiger Tag
 
 
 def _news_flat(ticker: str) -> bool:
-    """True wenn News-Count der letzten 3 Tage <= grober Toleranz ggü. dem Tagesmedian (30 Tage)."""
+    """True wenn News-Count der letzten 3 Tage <= grober Toleranz ggü. dem Tagesmedian (30 Tage).
+
+    buzz_history speichert nur Tage MIT Artikeln (keine 0-Zeilen) – der Median
+    darf trotzdem über alle 30 Kalendertage gebildet werden, sonst ist er
+    systematisch zu hoch (nur Nicht-Null-Tage) und der Filter zu permissiv (G4).
+    """
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT date, news_count FROM buzz_history WHERE ticker=? "
             "AND date >= date('now', '-30 days')", (ticker,)).fetchall()
     if not rows:
         return True  # keine News-Historie = keine News = flach
-    counts = {r["date"]: r["news_count"] for r in rows}
+    counts_by_date = {r["date"]: r["news_count"] for r in rows}
+    all_days = [(date.today() - timedelta(days=k)).isoformat() for k in range(30)]
+    daily_counts = [counts_by_date.get(d, 0) for d in all_days]
     cutoff = (date.today() - timedelta(days=3)).isoformat()
-    recent = sum(c for d, c in counts.items() if d >= cutoff)
-    med = statistics.median(counts.values())
+    recent = sum(c for d, c in counts_by_date.items() if d >= cutoff)
+    med = statistics.median(daily_counts)
     return recent <= max(med * 3, 3)  # 3 Tage vs. Tagesmedian → Faktor 3
 
 

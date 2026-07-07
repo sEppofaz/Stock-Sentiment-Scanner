@@ -1,4 +1,4 @@
-const CACHE = 'sentiment-v1';
+const CACHE = 'sentiment-v2';
 
 const SHELL = [
   '/sentiment/',

@@ -1,6 +1,7 @@
 """SQLite-Layer für Frühsignale. Alle Zugriffe auf signals.db laufen hier durch."""
 import json
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "signals.db"
@@ -49,16 +50,46 @@ CREATE TABLE IF NOT EXISTS forward_returns (
 """
 
 
-def get_conn() -> sqlite3.Connection:
+def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=15)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.row_factory = sqlite3.Row
     return conn
 
 
+@contextmanager
+def get_conn():
+    """`with get_conn() as conn:` committet (oder rollt zurück) UND schließt die
+    Connection – sqlite3.Connection als Context-Manager selbst schließt nicht,
+    das lief bisher nur zufällig über CPython-Refcounting (G1)."""
+    conn = _connect()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def init_db():
     with get_conn() as conn:
         conn.executescript(_SCHEMA)
+
+
+def cleanup_old_data() -> tuple[int, int]:
+    """Prunt operative Historientabellen, die unbegrenzt wachsen (M8).
+    signals/alerts/forward_returns bleiben unangetastet – das ist die
+    Validierungshistorie (Trefferquote/Rendite), die soll erhalten bleiben."""
+    with get_conn() as conn:
+        buzz_deleted = conn.execute(
+            "DELETE FROM buzz_history WHERE date < date('now', '-60 days')"
+        ).rowcount
+        edgar_deleted = conn.execute(
+            "DELETE FROM edgar_seen WHERE seen_ts < strftime('%Y-%m-%dT%H:%M:%S', 'now', '-30 days')"
+        ).rowcount
+    return buzz_deleted, edgar_deleted
 
 
 def insert_signal(ticker: str, signal_type: str, signal_ts: str,

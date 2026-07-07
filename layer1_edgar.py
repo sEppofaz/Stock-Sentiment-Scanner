@@ -19,6 +19,21 @@ MAX_PAGES = 5          # max 500 Filings pro Lauf
 REQ_DELAY = 0.15       # SEC-Limit 10 req/s → konservativ ~6/s
 
 
+def _normalize_ts(raw: str | None, fallback: str) -> str:
+    """Parst einen SEC-Atom-'updated'-Zeitstempel (beliebiger UTC-Offset) auf
+    dasselbe Format wie now_iso (UTC, Sekunden-Präzision) – sonst driften
+    signal_ts-Vergleiche (datetime('now','-7 days')) mit gemischten Offsets."""
+    if not raw:
+        return fallback
+    try:
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).isoformat(timespec="seconds")
+    except ValueError:
+        return fallback
+
+
 def _sec_get(url: str) -> requests.Response:
     time.sleep(REQ_DELAY)
     r = requests.get(url, headers=SEC_HEADERS, timeout=30)
@@ -45,11 +60,20 @@ def _feed_entries(start: int) -> list[dict]:
             continue
         link_el = entry.find("a:link", ATOM_NS)
         id_el = entry.find("a:id", ATOM_NS)
+        updated_el = entry.find("a:updated", ATOM_NS)
         if link_el is None or id_el is None:
             continue
         # id endet auf 'accession-number=0001234567-26-000123'
         acc = (id_el.text or "").rsplit("=", 1)[-1]
-        out.append({"accession": acc, "index_url": link_el.get("href")})
+        out.append({
+            "accession": acc,
+            "index_url": link_el.get("href"),
+            # Filing-Zeitstempel (falls vorhanden) statt eines pro Lauf geteilten
+            # now_iso – sonst kollidieren zwei Insider-Käufe desselben Tickers im
+            # selben 15-Min-Lauf am UNIQUE(ticker, signal_type, signal_ts) und das
+            # zweite Signal wird von INSERT OR IGNORE stumm verworfen (M5).
+            "updated": (updated_el.text or "").strip() if updated_el is not None else None,
+        })
     return out
 
 
@@ -170,7 +194,7 @@ def run_edgar_scan(cfg: dict) -> None:
             with get_conn() as conn:
                 others = conn.execute(
                     "SELECT details_json FROM signals WHERE ticker=? AND signal_type='insider_buy' "
-                    "AND signal_ts >= datetime('now', '-7 days')", (buy["symbol"],)).fetchall()
+                    "AND signal_ts >= strftime('%Y-%m-%dT%H:%M:%S', 'now', '-7 days')", (buy["symbol"],)).fetchall()
             other_owners = {json.loads(r["details_json"]).get("owner") for r in others}
             cluster = len(other_owners - {buy["owner"]}) >= 1
 
@@ -178,7 +202,8 @@ def run_edgar_scan(cfg: dict) -> None:
             details = dict(buy)
             details["cluster"] = cluster
             details["filing_url"] = e["index_url"]
-            insert_signal(buy["symbol"], "insider_buy", now_iso, score, details)
+            signal_ts = _normalize_ts(e.get("updated"), now_iso)
+            insert_signal(buy["symbol"], "insider_buy", signal_ts, score, details)
             hit_count += 1
             log.info("EDGAR Insider-Kauf: %s %s %.0f USD (cluster=%s)",
                      buy["symbol"], buy["owner"], buy["total_usd"], cluster)
