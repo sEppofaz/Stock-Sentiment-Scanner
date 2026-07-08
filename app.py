@@ -196,6 +196,13 @@ def _reschedule():
             _do_fwd_tracker, "cron", hour=17, minute=45,
             day_of_week="mon-fri", timezone="America/New_York", id="es_tracker",
         )
+        # Instant-Alerts für starke Einzelsignale (Josef-Feedback 2026-07-08:
+        # nicht auf ein zweites Signal / den Tagesabschluss warten müssen)
+        scheduler.add_job(
+            _do_es_instant, "cron",
+            hour="6-22", minute="*/15", day_of_week="mon-fri",
+            timezone="America/New_York", id="es_instant",
+        )
 
     log.info(
         "Scan-Zeiten: %s (Mo–Fr UTC) + Portfolio-Scan alle 15 Min 9:00–16:45 America/New_York",
@@ -285,6 +292,17 @@ def _do_fwd_tracker():
         run_tracker(cfg)
     except Exception:
         log.exception("Forward-Tracker fehlgeschlagen")
+
+
+def _do_es_instant():
+    cfg = _load_cfg()
+    if not cfg.get("early_signals", {}).get("enabled", False):
+        return
+    try:
+        from layer4_scoring import check_instant_alerts
+        check_instant_alerts(cfg)
+    except Exception:
+        log.exception("Instant-Alert-Check fehlgeschlagen")
 
 
 def _do_cleanup():

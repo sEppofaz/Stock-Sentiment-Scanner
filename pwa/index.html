@@ -294,6 +294,10 @@ tr:last-child td{border-bottom:none}
       <div class="pb-ticker" id="pb-ticker"></div>
       <button id="btn-abort" onclick="abortScan()">Scan abbrechen</button>
     </div>
+    <div id="dash-early" style="display:none;margin-bottom:14px">
+      <div class="section-title">🔮 Frühsignale</div>
+      <div id="dash-early-list"></div>
+    </div>
     <div id="status-bar">
       <div class="status-info" id="status-text">Lade Daten…</div>
       <button id="btn-scan" onclick="triggerScan()">
@@ -603,13 +607,15 @@ tr:last-child td{border-bottom:none}
           <li><b>Volumen-Anomalie:</b> Handelsvolumen weicht stark vom 20-Tage-Durchschnitt ab (z-Score)</li>
           <li><b>Buzz-Beschleunigung:</b> Artikelanzahl der letzten 3 Tage steigt sprunghaft gegenüber den 3 Tagen davor — ohne zusätzliche API-Calls, aus den Sentiment-Scan-Daten abgeleitet</li>
         </ul>
-        <p class="info-p">Ein <b>Alert</b> entsteht erst, wenn mindestens zwei verschiedene Signal-Typen für denselben Ticker innerhalb von 7 Tagen zusammenkommen und ein Mindest-Score erreicht ist. Ein 7-Tage-Cooldown verhindert Alert-Spam pro Ticker.</p>
+        <p class="info-p">Ein <b>Alert</b> entsteht auf zwei Wegen: (a) mindestens zwei verschiedene Signal-Typen für denselben Ticker innerhalb von 7 Tagen kommen zusammen und erreichen einen Mindest-Score, oder (b) ein <b>einzelnes, besonders starkes Signal</b> (z. B. Insider-Cluster, Kauf ≥ $100.000, Volumen-z-Score ≥ 6, Buzz-Beschleunigung ≥ 300 %) löst sofort aus — alle 15 Min geprüft, ohne auf ein zweites Signal zu warten. Ein 7-Tage-Cooldown verhindert Alert-Spam pro Ticker.</p>
+        <p class="info-p"><b>Automatische Beobachtung:</b> Jeder Alert-Ticker wird automatisch mit 1 Test-Aktie zum Kurs bei Alert ins Portfolio aufgenommen (Kennzeichnung „👁 Beobachtung"). So siehst du im Portfolio-Tab die Rendite seit dem Signal, ohne selbst tätig werden zu müssen — kein echter Kauf, keine echten Kosten. Abschaltbar über <code>early_signals.auto_watch</code>.</p>
+        <p class="info-p">Die aktuellsten Alerts erscheinen zusätzlich oben im <b>Dashboard</b> — unabhängig davon, ob der Ticker die News-Sentiment-Filter erfüllt (das ist ja gerade der Witz: Frühsignale kommen oft, bevor die Presse berichtet).</p>
         <p class="info-p">Die <b>Statistik je Horizont</b> (1/5/20 Handelstage) zeigt Trefferquote und durchschnittliche Rendite aller bisherigen Alerts — automatisch nachgezogen (Forward-Tracker).</p>
         <div class="info-disclaimer">Validierungsphase: Die Hypothese, dass diese Frühindikatoren tatsächlich vorhersagekräftig sind, ist unbewiesen. Erst nach 2–3 Monaten Datenhistorie ist die Statistik belastbar. Kein Investment-Advice.</div>
       </div>
 
       <div class="info-disclaimer">Kein Investment-Advice. Nur Sentiment-Daten aus Medienberichten. Keine Kauf- oder Verkaufsempfehlung.</div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.8 · 2026-07-07</p>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.9 · 2026-07-08</p>
     </div>
   </div>
 </div>
@@ -755,6 +761,34 @@ async function loadResults() {
       `<b>${d.scanned_count || '–'}</b> gescannt · <b>${d.results_count || _results.length}</b> Treffer`;
     renderResults();
   } catch { showEmpty(); }
+  loadDashboardEarly();
+}
+
+async function loadDashboardEarly() {
+  // Zeigt aktuelle Frühsignal-Alerts oben im Dashboard – unabhängig vom
+  // News-Sentiment-Filter, der Ticker sonst erst zeigt wenn es "in der
+  // Presse" ist (Josef-Feedback 2026-07-08: das ist strukturell zu spät).
+  try {
+    const r = await fetch('/sentiment/api/early-signals');
+    const d = await r.json();
+    const alerts = (d.alerts || []).slice(0, 5);
+    const box = document.getElementById('dash-early');
+    if (!alerts.length) { box.style.display = 'none'; return; }
+    box.style.display = 'block';
+    document.getElementById('dash-early-list').innerHTML = alerts.map(a => {
+      const price = a.price_at_alert != null ? `$${a.price_at_alert.toFixed(2)}` : '–';
+      return `<div class="es-alert-card">
+        <div class="es-alert-hd">
+          <span class="es-alert-ticker">${esc(a.ticker)}</span>
+          <span class="es-alert-score">${Math.round(a.total_score)}</span>
+        </div>
+        <div class="es-alert-date">${esDate(a.alert_ts)}</div>
+        <div class="es-alert-price">Kurs bei Alert: ${price} · automatisch im Portfolio beobachtet</div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    document.getElementById('dash-early').style.display = 'none';
+  }
 }
 
 function renderResults() {
@@ -951,6 +985,7 @@ async function loadPortfolio() {
 
   list.innerHTML = portfolio.map(p => {
     const sell = p.sell_signal;
+    const watch = !!p.watch;
     const price = p.current_price;
     const pnl = p.pnl;
     const pnlPct = p.pnl_pct;
@@ -962,18 +997,27 @@ async function loadPortfolio() {
     const sentAt = p.last_sentiment?.scanned_at
       ? new Date(p.last_sentiment.scanned_at).toLocaleString('de-AT', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
       : '–';
+    const watchSince = p.buy_date
+      ? new Date(p.buy_date).toLocaleDateString('de-AT', {day:'2-digit',month:'2-digit',year:'numeric'})
+      : '–';
 
-    return `<div class="pf-card${sell?' sell-signal':''}">
-      ${sell ? `<div class="pf-sell-banner">🔴 <b>Verkaufsempfehlung:</b> ${esc(p.sell_reason || 'Stimmung gedreht')}</div>` : ''}
-      <div class="pf-card-hd">
-        <div>
-          <div class="pf-card-ticker">${esc(p.ticker)}</div>
-          <div class="pf-card-name">${esc(p.name)||'–'}</div>
+    const grid = watch ? `
+      <div class="pf-grid">
+        <div class="pf-kpi">
+          <div class="pf-kpi-label">Kurs bei Signal</div>
+          <div class="pf-kpi-val">$${p.buy_price.toFixed(2)}</div>
         </div>
-        <div style="font-size:.75rem;color:var(--muted);text-align:right">
-          ${p.shares} Aktien<br>Stand: ${sentAt}
+        <div class="pf-kpi">
+          <div class="pf-kpi-label">Aktuell</div>
+          <div class="pf-kpi-val">${price ? '$' + price.toFixed(2) : '–'}</div>
         </div>
       </div>
+      <div class="pf-grid" style="margin-top:8px">
+        <div class="pf-kpi" style="grid-column:1/-1">
+          <div class="pf-kpi-label">Rendite seit Signal</div>
+          <div class="pf-kpi-val ${posNeg}">${pnlPctStr}</div>
+        </div>
+      </div>` : `
       <div class="pf-grid">
         <div class="pf-kpi">
           <div class="pf-kpi-label">Einstand</div>
@@ -991,7 +1035,20 @@ async function loadPortfolio() {
           <div class="pf-kpi-label">P&amp;L</div>
           <div class="pf-kpi-val ${posNeg}">${pnlStr} <span style="font-size:.8rem">(${pnlPctStr})</span></div>
         </div>
+      </div>`;
+
+    return `<div class="pf-card${sell?' sell-signal':''}">
+      ${sell ? `<div class="pf-sell-banner">🔴 <b>Verkaufsempfehlung:</b> ${esc(p.sell_reason || 'Stimmung gedreht')}</div>` : ''}
+      <div class="pf-card-hd">
+        <div>
+          <div class="pf-card-ticker">${esc(p.ticker)}${watch ? ' <span class="chip pinned" style="margin-left:4px">👁 Beobachtung</span>' : ''}</div>
+          <div class="pf-card-name">${esc(p.name)||'–'}</div>
+        </div>
+        <div style="font-size:.75rem;color:var(--muted);text-align:right">
+          ${watch ? `seit ${watchSince}` : `${p.shares} Aktien<br>Stand: ${sentAt}`}
+        </div>
       </div>
+      ${grid}
       ${p.last_sentiment ? `<div class="rc-chips">
         <span class="chip${sell?' red':' green'}">Bullish ${p.last_sentiment.bullish_pct}%</span>
         <span class="chip">Bearish ${p.last_sentiment.bearish_pct}%</span>

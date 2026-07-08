@@ -18,6 +18,10 @@
     "buzz_rel_accel_min": 1.0,
     "alert_min_score": 4,
     "alert_min_types": 2,
-    "alert_cooldown_days": 7
+    "alert_cooldown_days": 7,
+    "single_insider_min_usd": 100000,
+    "single_volume_z_min": 6.0,
+    "single_buzz_accel_min": 3.0,
+    "auto_watch": true
   }
 }
