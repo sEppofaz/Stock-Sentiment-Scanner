@@ -16,6 +16,8 @@ def _detail_line(s) -> str:
         extra = html.escape(d.get("filing_url", ""))
     elif s["signal_type"] == "volume_anomaly":
         extra = f"z={d.get('z_score')}"
+    elif s["signal_type"] == "large_holder":
+        extra = f"{d.get('form_type', '?')} {d.get('pct', '?')}% – {html.escape(d.get('owner', ''))}"
     else:
         extra = f"accel={d.get('rel_accel')}"
     return f"• {s['signal_type']} {s['signal_ts'][:16]} {extra}"
@@ -111,7 +113,8 @@ def run_scoring(cfg: dict) -> None:
         types = {s["signal_type"] for s in sigs}
         if len(types) < min_types:
             continue
-        # Gewichte: insider 3 (+2 Cluster), volume 2 (z>=4: 3), buzz 1 — pro Typ nur das stärkste Signal
+        # Gewichte: insider 3 (+2 Cluster), volume 2 (z>=4: 3), large_holder
+        # 3/1.5 (13D/13G), buzz 1 — pro Typ nur das stärkste Signal
         best: dict[str, float] = {}
         for s in sigs:
             d = json.loads(s["details_json"] or "{}")
@@ -119,6 +122,8 @@ def run_scoring(cfg: dict) -> None:
                 w = 3.0 + (2.0 if d.get("cluster") else 0.0)
             elif s["signal_type"] == "volume_anomaly":
                 w = 3.0 if d.get("z_score", 0) >= 4.0 else 2.0
+            elif s["signal_type"] == "large_holder":
+                w = 3.0 if d.get("form_type") == "13D" else 1.5
             else:
                 w = 1.0
             best[s["signal_type"]] = max(best.get(s["signal_type"], 0), w)
@@ -141,6 +146,7 @@ def check_instant_alerts(cfg: dict) -> None:
     ins_min = es.get("single_insider_min_usd", 100000)
     vol_min = es.get("single_volume_z_min", 6.0)
     buzz_min = es.get("single_buzz_accel_min", 3.0)
+    holder_13g_min_pct = es.get("single_large_holder_13g_min_pct", 7.0)
     cooldown = es.get("alert_cooldown_days", 7)
 
     with get_conn() as conn:
@@ -157,6 +163,11 @@ def check_instant_alerts(cfg: dict) -> None:
             strong = d.get("z_score", 0) >= vol_min
         elif r["signal_type"] == "buzz_accel":
             strong = d.get("rel_accel", 0) >= buzz_min
+        elif r["signal_type"] == "large_holder":
+            # 13D (aktiver/aktivistischer Investor) ist per Definition schon
+            # ein starkes Signal; 13G (passiv, z.B. Indexfonds) nur ab einem
+            # deutlich höheren Anteil als die 5%-Meldeschwelle
+            strong = d.get("form_type") == "13D" or d.get("pct", 0) >= holder_13g_min_pct
         else:
             strong = False
         if not strong:

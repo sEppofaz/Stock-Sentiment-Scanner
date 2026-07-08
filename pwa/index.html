@@ -219,6 +219,9 @@ tr:last-child td{border-bottom:none}
 .es-signal-label{font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
 .es-signal-date{font-size:.72rem;color:var(--muted);flex-shrink:0;white-space:nowrap}
 .es-signal-detail{font-size:.85rem;line-height:1.4;overflow-wrap:break-word}
+.es-filter-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.es-filter-chip{font-size:.75rem;padding:5px 10px;border-radius:20px;background:var(--bg3);color:var(--muted);border:none;cursor:pointer;transition:background .15s,color .15s}
+.es-filter-chip.active{background:var(--accent);color:#fff}
 
 /* Scroll-to-Top */
 .back-top{position:fixed;bottom:calc(24px + env(safe-area-inset-bottom));right:16px;width:40px;height:40px;border-radius:50%;background:var(--accent);color:#fff;border:none;font-size:20px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.25);display:none;align-items:center;justify-content:center;z-index:200}
@@ -488,6 +491,7 @@ tr:last-child td{border-bottom:none}
     <div id="es-alerts-empty" style="display:none" class="es-empty">Noch keine Alerts ausgelöst.</div>
 
     <div class="section-title" style="margin-top:18px">Signal-Feed</div>
+    <div class="es-filter-row" id="es-filter"></div>
     <div id="es-signals"></div>
     <div id="es-signals-empty" style="display:none" class="es-empty">Noch keine Signale erfasst.</div>
   </div>
@@ -621,10 +625,16 @@ tr:last-child td{border-bottom:none}
         </div>
 
         <div class="info-setting">
+          <div class="info-setting-name">Großaktionär (13D/13G)</div>
+          <span>Wer mehr als 5 % einer Aktie hält, muss das der SEC melden. <b>Schedule 13D</b> = aktiver Investor, der Einfluss/Kontrolle anstreben kann (z. B. Board-Sitz fordern) — starkes Signal, muss binnen 10 Tagen nach Überschreiten der Schwelle eingereicht werden. <b>Schedule 13G</b> = passiver Investor ohne Kontrollabsicht (z. B. Indexfonds) — schwächeres, aber häufigeres Signal. Ein 13D-Alert löst deshalb immer sofort aus, ein 13G erst ab einem deutlich höheren Anteil als die 5 %-Meldeschwelle.</span>
+        </div>
+
+        <div class="info-setting">
           <div class="info-setting-name">Wann ist das ein Kauf-Hinweis?</div>
           <span>Nie automatisch. Ein <b>Alert</b> (siehe unten) ist der Moment, an dem sich ein genauerer Blick lohnt. Je mehr <b>unabhängige</b> Signal-Typen gleichzeitig auftreten, desto glaubwürdiger. Die Trefferquote-Statistik zeigt ehrlich, ob das System überhaupt funktioniert — dafür ist die Validierungsphase da (siehe Disclaimer unten).</span>
         </div>
-        <p class="info-p">Ein <b>Alert</b> entsteht auf zwei Wegen: (a) mindestens zwei verschiedene Signal-Typen für denselben Ticker innerhalb von 7 Tagen kommen zusammen und erreichen einen Mindest-Score, oder (b) ein <b>einzelnes, besonders starkes Signal</b> (z. B. Insider-Cluster, Kauf ≥ $100.000, Volumen-z-Score ≥ 6, Buzz-Beschleunigung ≥ 300 %) löst sofort aus — alle 15 Min geprüft, ohne auf ein zweites Signal zu warten. Ein 7-Tage-Cooldown verhindert Alert-Spam pro Ticker.</p>
+        <p class="info-p">Ein <b>Alert</b> entsteht auf zwei Wegen: (a) mindestens zwei verschiedene Signal-Typen für denselben Ticker innerhalb von 7 Tagen kommen zusammen und erreichen einen Mindest-Score, oder (b) ein <b>einzelnes, besonders starkes Signal</b> (z. B. Insider-Cluster, Kauf ≥ $100.000, Volumen-z-Score ≥ 6, Buzz-Beschleunigung ≥ 300 %, 13D-Meldung) löst sofort aus — alle 15 Min geprüft, ohne auf ein zweites Signal zu warten. Ein 7-Tage-Cooldown verhindert Alert-Spam pro Ticker.</p>
+        <p class="info-p">Im Signal-Feed kannst du über die Filter-Chips nach einzelnen Signal-Typen filtern.</p>
         <p class="info-p"><b>Automatische Beobachtung:</b> Jeder Alert-Ticker wird automatisch mit 1 Test-Aktie zum Kurs bei Alert ins Portfolio aufgenommen (Kennzeichnung „👁 Beobachtung"). So siehst du im Portfolio-Tab die Rendite seit dem Signal, ohne selbst tätig werden zu müssen — kein echter Kauf, keine echten Kosten. Abschaltbar über <code>early_signals.auto_watch</code>.</p>
         <p class="info-p">Die aktuellsten Alerts erscheinen zusätzlich oben im <b>Dashboard</b> — unabhängig davon, ob der Ticker die News-Sentiment-Filter erfüllt (das ist ja gerade der Witz: Frühsignale kommen oft, bevor die Presse berichtet).</p>
         <p class="info-p">Die <b>Statistik je Horizont</b> (1/5/20 Handelstage) zeigt Trefferquote und durchschnittliche Rendite aller bisherigen Alerts — automatisch nachgezogen (Forward-Tracker).</p>
@@ -632,7 +642,7 @@ tr:last-child td{border-bottom:none}
       </div>
 
       <div class="info-disclaimer">Kein Investment-Advice. Nur Sentiment-Daten aus Medienberichten. Keine Kauf- oder Verkaufsempfehlung.</div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.10 · 2026-07-08</p>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.11 · 2026-07-08</p>
     </div>
   </div>
 </div>
@@ -1215,7 +1225,11 @@ const ES_TYPE_LABEL = {
   insider_buy: 'Insider-Kauf',
   volume_anomaly: 'Volumen-Anomalie',
   buzz_accel: 'Buzz-Beschleunigung',
+  large_holder: 'Großaktionär',
 };
+const ES_FILTER_TYPES = ['insider_buy', 'volume_anomaly', 'buzz_accel', 'large_holder'];
+let _esActiveFilters = new Set(ES_FILTER_TYPES);
+let _esSignalsCache = [];
 
 function esFormatDetail(type, d) {
   if (type === 'insider_buy') {
@@ -1234,7 +1248,49 @@ function esFormatDetail(type, d) {
     const prev = d.prev_3d ?? '–';
     return `${recent} Artikel in 3 Tagen (vorher ${prev}) · +${Math.round((d.rel_accel || 0) * 100)}%`;
   }
+  if (type === 'large_holder') {
+    const pct = d.pct != null ? `${d.pct}%` : '–';
+    const shares = d.shares ? ` (${Math.round(d.shares).toLocaleString('de-AT')} Aktien)` : '';
+    const kind = d.form_type === '13D' ? 'Aktiver Investor (13D)' : 'Passiver Investor (13G)';
+    return `${esc(d.owner)||'–'} hält ${pct}${shares} · ${kind}`;
+  }
   return '';
+}
+
+function renderEsFilterChips() {
+  document.getElementById('es-filter').innerHTML = ES_FILTER_TYPES.map(t => {
+    const active = _esActiveFilters.has(t);
+    return `<button class="es-filter-chip${active ? ' active' : ''}" onclick="toggleEsFilter('${t}')">${esc(ES_TYPE_LABEL[t])}</button>`;
+  }).join('');
+}
+
+function toggleEsFilter(type) {
+  if (_esActiveFilters.has(type)) _esActiveFilters.delete(type);
+  else _esActiveFilters.add(type);
+  renderEsFilterChips();
+  renderEsSignals();
+}
+
+function renderEsSignals() {
+  const filtered = _esSignalsCache.filter(s => _esActiveFilters.has(s.signal_type));
+  document.getElementById('es-signals-empty').style.display = filtered.length ? 'none' : 'block';
+  document.getElementById('es-signals-empty').textContent = _esSignalsCache.length
+    ? 'Kein Signal für die gewählten Filter.'
+    : 'Noch keine Signale erfasst.';
+  document.getElementById('es-signals').innerHTML = filtered.map(s => {
+    let det = {};
+    try { det = JSON.parse(s.details_json || '{}'); } catch(e) {}
+    return `<div class="es-signal-item">
+      <div class="es-signal-top">
+        <div class="es-signal-left">
+          <span class="es-signal-ticker">${esc(s.ticker)}</span>
+          <span class="es-signal-label">${esc(ES_TYPE_LABEL[s.signal_type] || s.signal_type)}</span>
+        </div>
+        <span class="es-signal-date">${esDate(s.signal_ts)}</span>
+      </div>
+      <div class="es-signal-detail">${esFormatDetail(s.signal_type, det)}</div>
+    </div>`;
+  }).join('');
 }
 
 function esDate(iso) {
@@ -1280,22 +1336,9 @@ async function loadEarlySignals() {
       </div>`;
     }).join('');
 
-    const signals = d.signals || [];
-    document.getElementById('es-signals-empty').style.display = signals.length ? 'none' : 'block';
-    document.getElementById('es-signals').innerHTML = signals.map(s => {
-      let det = {};
-      try { det = JSON.parse(s.details_json || '{}'); } catch(e) {}
-      return `<div class="es-signal-item">
-        <div class="es-signal-top">
-          <div class="es-signal-left">
-            <span class="es-signal-ticker">${esc(s.ticker)}</span>
-            <span class="es-signal-label">${esc(ES_TYPE_LABEL[s.signal_type] || s.signal_type)}</span>
-          </div>
-          <span class="es-signal-date">${esDate(s.signal_ts)}</span>
-        </div>
-        <div class="es-signal-detail">${esFormatDetail(s.signal_type, det)}</div>
-      </div>`;
-    }).join('');
+    _esSignalsCache = d.signals || [];
+    renderEsFilterChips();
+    renderEsSignals();
   } catch (e) {
     document.getElementById('es-signals-empty').style.display = 'block';
     document.getElementById('es-signals-empty').textContent = 'Fehler beim Laden.';

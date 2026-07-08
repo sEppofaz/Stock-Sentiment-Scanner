@@ -180,6 +180,12 @@ def _reschedule():
             hour="6-22", minute="*/15", day_of_week="mon-fri",
             timezone="America/New_York", id="edgar_scan",
         )
+        # Layer 5: SC 13D/13G Großaktionärs-Meldungen (2026-07-08, Josef-Feedback)
+        scheduler.add_job(
+            _do_ownership_scan, "cron",
+            hour="6-22", minute="*/15", day_of_week="mon-fri",
+            timezone="America/New_York", id="ownership_scan",
+        )
         scheduler.add_job(
             _do_volume_scan, "cron", hour=17, minute=15,
             day_of_week="mon-fri", timezone="America/New_York", id="volume_scan",
@@ -248,6 +254,17 @@ def _do_edgar_scan():
         run_edgar_scan(cfg)
     except Exception:
         log.exception("EDGAR-Scan fehlgeschlagen")
+
+
+def _do_ownership_scan():
+    cfg = _load_cfg()
+    if not cfg.get("early_signals", {}).get("enabled", False):
+        return
+    try:
+        from layer5_ownership import run_ownership_scan
+        run_ownership_scan(cfg)
+    except Exception:
+        log.exception("Ownership-Scan (13D/13G) fehlgeschlagen")
 
 
 def _do_volume_scan():
