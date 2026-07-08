@@ -161,9 +161,13 @@ def _reschedule():
 
     # Portfolio-Scan: alle 15 Min Mo–Fr 9:00–16:45 America/New_York
     # (DST-sicher; _market_open()-Guard grenzt auf die echte Handelszeit 9:30–16:00 ein)
+    # Minute 12/27/42/57 statt 0/15/30/45 (Josef-Feedback 2026-07-08): sonst
+    # konkurriert der Finnhub-intensive Portfolio-Scan mit edgar_scan/
+    # ownership_scan/es_instant um denselben globalen 55-Calls/Min-Throttle,
+    # da alle vier zur selben Minute ausgelöst würden. Siehe Staffelung unten.
     scheduler.add_job(
         _do_portfolio_scan, "cron",
-        hour="9-16", minute="0,15,30,45", day_of_week="mon-fri",
+        hour="9-16", minute="12,27,42,57", day_of_week="mon-fri",
         timezone="America/New_York", id="portfolio_scan",
     )
 
@@ -175,15 +179,19 @@ def _reschedule():
 
     # Frühsignale (EARLY_SIGNALS_UMSETZUNG.md)
     if cfg.get("early_signals", {}).get("enabled", False):
+        # Die vier 15-Min-Jobs (edgar/ownership/es_instant/portfolio_scan) sind
+        # bewusst in ~4-Min-Schritten gestaffelt (Josef-Feedback 2026-07-08) –
+        # vorher liefen alle zur selben Minute und konkurrierten um denselben
+        # globalen Finnhub-Throttle (scanner._throttle(), 55 Calls/Min).
         scheduler.add_job(
             _do_edgar_scan, "cron",
-            hour="6-22", minute="*/15", day_of_week="mon-fri",
+            hour="6-22", minute="0,15,30,45", day_of_week="mon-fri",
             timezone="America/New_York", id="edgar_scan",
         )
         # Layer 5: SC 13D/13G Großaktionärs-Meldungen (2026-07-08, Josef-Feedback)
         scheduler.add_job(
             _do_ownership_scan, "cron",
-            hour="6-22", minute="*/15", day_of_week="mon-fri",
+            hour="6-22", minute="4,19,34,49", day_of_week="mon-fri",
             timezone="America/New_York", id="ownership_scan",
         )
         scheduler.add_job(
@@ -206,12 +214,12 @@ def _reschedule():
         # nicht auf ein zweites Signal / den Tagesabschluss warten müssen)
         scheduler.add_job(
             _do_es_instant, "cron",
-            hour="6-22", minute="*/15", day_of_week="mon-fri",
+            hour="6-22", minute="8,23,38,53", day_of_week="mon-fri",
             timezone="America/New_York", id="es_instant",
         )
 
     log.info(
-        "Scan-Zeiten: %s (Mo–Fr UTC) + Portfolio-Scan alle 15 Min 9:00–16:45 America/New_York",
+        "Scan-Zeiten: %s (Mo–Fr UTC) + Portfolio-Scan alle 15 Min :12/:27/:42/:57 America/New_York (gestaffelt ggü. EDGAR-Jobs)",
         cfg.get("scan_times_utc"),
     )
 
