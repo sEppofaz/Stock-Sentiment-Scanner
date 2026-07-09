@@ -23,6 +23,7 @@
     "single_volume_z_min": 6.0,
     "single_buzz_accel_min": 3.0,
     "single_large_holder_13g_min_pct": 7.0,
-    "auto_watch": true
+    "auto_watch": true,
+    "max_instant_alerts_per_day": 5
   }
 }

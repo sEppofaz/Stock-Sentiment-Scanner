@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     alert_ts      TEXT NOT NULL,
     total_score   REAL,
     signal_ids    TEXT,               -- JSON-Array der beteiligten signals.id
-    price_at_alert REAL
+    price_at_alert REAL,
+    kind          TEXT NOT NULL DEFAULT 'instant'  -- 'instant' | 'combo'
 );
 
 CREATE TABLE IF NOT EXISTS forward_returns (
@@ -76,6 +77,12 @@ def get_conn():
 def init_db():
     with get_conn() as conn:
         conn.executescript(_SCHEMA)
+        # Migration: bestehende alerts-Tabelle (vor 2026-07-09) hat noch
+        # keine kind-Spalte – CREATE TABLE IF NOT EXISTS legt sie dort nicht
+        # nach.
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(alerts)").fetchall()]
+        if "kind" not in cols:
+            conn.execute("ALTER TABLE alerts ADD COLUMN kind TEXT NOT NULL DEFAULT 'instant'")
 
 
 def cleanup_old_data() -> tuple[int, int]:

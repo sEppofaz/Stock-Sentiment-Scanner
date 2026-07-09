@@ -4,10 +4,19 @@ import html
 import json
 import logging
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from signals_db import get_conn
 
 log = logging.getLogger("scanner")
+
+
+def _et_day_start_utc_iso() -> str:
+    """Start des laufenden Handelstags (Kalendertag America/New_York), als
+    UTC-ISO-String für SQL-Vergleiche gegen alert_ts."""
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    start_et = now_et.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start_et.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _detail_line(s) -> str:
@@ -48,11 +57,11 @@ def _auto_watch(cfg: dict, ticker: str, price: float | None) -> None:
 
 
 def _create_alert(cfg: dict, ticker: str, sigs: list, total_score: float,
-                   cooldown_days: int, tag: str = "") -> bool:
+                   cooldown_days: int, tag: str = "", kind: str = "instant") -> bool:
     """Cooldown-Check + Alert-Insert + forward_returns + Telegram + Auto-Watch.
-    Gemeinsamer Pfad für run_scoring() (Kombi, täglich) und
-    check_instant_alerts() (starkes Einzelsignal, alle 15 Min). True wenn
-    tatsächlich ausgelöst (False bei aktivem Cooldown)."""
+    Gemeinsamer Pfad für run_scoring() (Kombi, täglich, kind='combo') und
+    check_instant_alerts() (starkes Einzelsignal, alle 15 Min, kind='instant').
+    True wenn tatsächlich ausgelöst (False bei aktivem Cooldown)."""
     from scanner import _tg_post, _fetch_quote
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -67,9 +76,9 @@ def _create_alert(cfg: dict, ticker: str, sigs: list, total_score: float,
     sig_ids = [s["id"] for s in sigs]
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO alerts (ticker, alert_ts, total_score, signal_ids, price_at_alert) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (ticker, now_iso, total_score, json.dumps(sig_ids), price))
+            "INSERT INTO alerts (ticker, alert_ts, total_score, signal_ids, price_at_alert, kind) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (ticker, now_iso, total_score, json.dumps(sig_ids), price, kind))
         alert_id = cur.lastrowid
         if price is not None:
             # Ohne price_at_alert kann forward_tracker nie eine Rendite
@@ -130,7 +139,7 @@ def run_scoring(cfg: dict) -> None:
         total = sum(best.values())
         if total < min_score:
             continue
-        if _create_alert(cfg, ticker, sigs, total, cooldown):
+        if _create_alert(cfg, ticker, sigs, total, cooldown, kind="combo"):
             alert_count += 1
 
     log.info("Scoring fertig: %d Alerts", alert_count)
@@ -141,20 +150,33 @@ def check_instant_alerts(cfg: dict) -> None:
     Min) auf Einzelsignal-Stärke, unabhängig vom täglichen Kombi-Lauf. Für
     Fälle, in denen ein einzelnes Signal schon so stark ist, dass man nicht
     auf ein zweites/den Tagesabschluss warten will (Josef-Feedback
-    2026-07-08: 'ich will früh wissen, wann ich aktiv werden sollte')."""
+    2026-07-08: 'ich will früh wissen, wann ich aktiv werden sollte').
+
+    Tages-Cap (Josef-Feedback 2026-07-09: 'zu viele Signale, nur die
+    besten'): pro Handelstag (Kalendertag America/New_York) werden nur die
+    `max_instant_alerts_per_day` stärksten Instant-Alerts per Telegram
+    versendet. Kandidaten werden zuerst nach Rohwert (score) sortiert
+    behandelt, damit bei knappen Slots die stärksten zuerst zum Zug kommen.
+    Ist das Tageskontingent voll, löst ein neuer Kandidat trotzdem aus, wenn
+    er stärker ist als der bisher schwächste der heutigen Top-N – bereits
+    versendete Telegram-Nachrichten lassen sich nicht zurückholen, daher
+    kann die tatsächliche Nachrichtenzahl an volatilen Tagen etwas über dem
+    Limit liegen; die Alerts/Signale bleiben aber weiterhin vollständig im
+    Signal-Feed der PWA sichtbar."""
     es = cfg.get("early_signals", {})
     ins_min = es.get("single_insider_min_usd", 100000)
     vol_min = es.get("single_volume_z_min", 6.0)
     buzz_min = es.get("single_buzz_accel_min", 3.0)
     holder_13g_min_pct = es.get("single_large_holder_13g_min_pct", 7.0)
     cooldown = es.get("alert_cooldown_days", 7)
+    max_per_day = es.get("max_instant_alerts_per_day", 5)
 
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT id, ticker, signal_type, signal_ts, score, details_json FROM signals "
             "WHERE signal_ts >= strftime('%Y-%m-%dT%H:%M:%S', 'now', '-20 minutes')").fetchall()
 
-    fired = 0
+    candidates = []
     for r in rows:
         d = json.loads(r["details_json"] or "{}")
         if r["signal_type"] == "insider_buy":
@@ -170,10 +192,25 @@ def check_instant_alerts(cfg: dict) -> None:
             strong = d.get("form_type") == "13D" or d.get("pct", 0) >= holder_13g_min_pct
         else:
             strong = False
-        if not strong:
+        if strong:
+            candidates.append(r)
+
+    # Stärkste zuerst, damit sie bei knappen Tages-Slots Vorrang haben
+    candidates.sort(key=lambda r: r["score"] or 0, reverse=True)
+
+    day_start = _et_day_start_utc_iso()
+    fired = 0
+    for r in candidates:
+        with get_conn() as conn:
+            today_scores = [row["total_score"] or 0 for row in conn.execute(
+                "SELECT total_score FROM alerts WHERE kind='instant' AND alert_ts >= ? "
+                "ORDER BY total_score DESC LIMIT ?", (day_start, max_per_day)).fetchall()]
+        allow = len(today_scores) < max_per_day or (r["score"] or 0) > min(today_scores)
+        if not allow:
             continue
-        if _create_alert(cfg, r["ticker"], [r], r["score"], cooldown, tag="Einzelsignal, stark"):
+        if _create_alert(cfg, r["ticker"], [r], r["score"], cooldown,
+                          tag="Einzelsignal, stark", kind="instant"):
             fired += 1
 
     if fired:
-        log.info("Instant-Alerts: %d ausgelöst", fired)
+        log.info("Instant-Alerts: %d ausgelöst (Tages-Limit %d)", fired, max_per_day)

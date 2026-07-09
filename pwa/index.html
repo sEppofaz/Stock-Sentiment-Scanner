@@ -42,8 +42,11 @@ header{background:var(--accent);color:#fff;padding:calc(16px + env(safe-area-ins
 .hd-row{display:flex;align-items:center;justify-content:space-between;padding-bottom:12px}
 .hd-title{font-size:1.05rem;font-weight:700}
 .hd-sub{font-size:.75rem;opacity:.75;margin-top:1px}
-#btn-info{background:rgba(255,255,255,.15);border:none;color:#fff;height:34px;padding:0 12px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;transition:background .15s}
-#btn-info:active{background:rgba(255,255,255,.3)}
+.hd-actions{display:flex;align-items:center;gap:8px}
+#btn-info,#tab-config{background:rgba(255,255,255,.15);border:none;color:#fff;height:34px;border-radius:9px;cursor:pointer;transition:background .15s}
+#btn-info{padding:0 12px;font-size:13px;font-weight:600}
+#tab-config{width:34px;padding:0;display:flex;align-items:center;justify-content:center}
+#btn-info:active,#tab-config:active{background:rgba(255,255,255,.3)}
 
 /* Tabs */
 .tabs{display:flex;border-bottom:1px solid rgba(255,255,255,.2)}
@@ -260,7 +263,12 @@ tr:last-child td{border-bottom:none}
       <div class="hd-title">Sentiment Scanner</div>
       <div class="hd-sub" id="hd-sub">Russell 2000 Small Caps</div>
     </div>
-    <button id="btn-info" onclick="document.getElementById('info-overlay').classList.add('show')">Info</button>
+    <div class="hd-actions">
+      <button id="tab-config" onclick="switchTab('config')" aria-label="Einstellungen">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
+      <button id="btn-info" onclick="document.getElementById('info-overlay').classList.add('show')">Info</button>
+    </div>
   </div>
   <div class="tabs">
     <button class="tab active" onclick="switchTab('dashboard')" id="tab-dashboard">
@@ -270,10 +278,6 @@ tr:last-child td{border-bottom:none}
     <button class="tab" onclick="switchTab('portfolio')" id="tab-portfolio">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
       Portfolio
-    </button>
-    <button class="tab" onclick="switchTab('config')" id="tab-config">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
-      Einstellungen
     </button>
     <button class="tab" onclick="switchTab('costs')" id="tab-costs">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
@@ -434,6 +438,67 @@ tr:last-child td{border-bottom:none}
       <div class="cfg-row">
         <span class="cfg-label">Top N Ergebnisse</span>
         <input class="cfg-input" type="number" id="cfg-top-n" min="10" max="200">
+      </div>
+    </div>
+    <div class="cfg-section">
+      <div class="cfg-title">Frühsignale</div>
+      <div class="cfg-row">
+        <span class="cfg-label">Frühsignal-Layer aktiv</span>
+        <label class="cfg-toggle">
+          <input type="checkbox" id="cfg-es-enabled">
+          <span class="cfg-slider"></span>
+        </label>
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Auto-Watch (Alert-Ticker automatisch beobachten)</span>
+        <label class="cfg-toggle">
+          <input type="checkbox" id="cfg-es-auto-watch">
+          <span class="cfg-slider"></span>
+        </label>
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Max. Instant-Alerts / Tag</span>
+        <input class="cfg-input" type="number" id="cfg-es-max-alerts" min="1" max="50">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Insider-Kauf min. $ (Kombi-Signal)</span>
+        <input class="cfg-input" type="number" id="cfg-es-insider-min" min="0" step="1000">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Volumen-z-Score min. (Kombi-Signal)</span>
+        <input class="cfg-input" type="number" id="cfg-es-volume-z-min" min="0" step="0.1">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Buzz-Beschleunigung min. (Kombi-Signal)</span>
+        <input class="cfg-input" type="number" id="cfg-es-buzz-accel-min" min="0" step="0.1">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Alert Mindest-Score (Kombi)</span>
+        <input class="cfg-input" type="number" id="cfg-es-alert-min-score" min="0" step="0.5">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Alert Mindestanzahl Signal-Typen (Kombi)</span>
+        <input class="cfg-input" type="number" id="cfg-es-alert-min-types" min="1" max="4">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Alert-Cooldown (Tage)</span>
+        <input class="cfg-input" type="number" id="cfg-es-alert-cooldown" min="1" max="30">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Einzelsignal Insider-Kauf min. $ (Instant)</span>
+        <input class="cfg-input" type="number" id="cfg-es-single-insider-min" min="0" step="1000">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Einzelsignal Volumen-z-Score min. (Instant)</span>
+        <input class="cfg-input" type="number" id="cfg-es-single-volume-z-min" min="0" step="0.1">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Einzelsignal Buzz-Beschleunigung min. (Instant)</span>
+        <input class="cfg-input" type="number" id="cfg-es-single-buzz-accel-min" min="0" step="0.1">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Einzelsignal 13G-Anteil min. % (Instant)</span>
+        <input class="cfg-input" type="number" id="cfg-es-single-13g-pct" min="0" max="100" step="0.5">
       </div>
     </div>
     <button class="btn-save" onclick="saveConfig()">Speichern</button>
@@ -633,7 +698,8 @@ tr:last-child td{border-bottom:none}
           <div class="info-setting-name">Wann ist das ein Kauf-Hinweis?</div>
           <span>Nie automatisch. Ein <b>Alert</b> (siehe unten) ist der Moment, an dem sich ein genauerer Blick lohnt. Je mehr <b>unabhängige</b> Signal-Typen gleichzeitig auftreten, desto glaubwürdiger. Die Trefferquote-Statistik zeigt ehrlich, ob das System überhaupt funktioniert — dafür ist die Validierungsphase da (siehe Disclaimer unten).</span>
         </div>
-        <p class="info-p">Ein <b>Alert</b> entsteht auf zwei Wegen: (a) mindestens zwei verschiedene Signal-Typen für denselben Ticker innerhalb von 7 Tagen kommen zusammen und erreichen einen Mindest-Score, oder (b) ein <b>einzelnes, besonders starkes Signal</b> (z. B. Insider-Cluster, Kauf ≥ $100.000, Volumen-z-Score ≥ 6, Buzz-Beschleunigung ≥ 300 %, 13D-Meldung) löst sofort aus — alle 15 Min geprüft, ohne auf ein zweites Signal zu warten. Ein 7-Tage-Cooldown verhindert Alert-Spam pro Ticker.</p>
+        <p class="info-p">Ein <b>Alert</b> entsteht auf zwei Wegen: (a) mindestens zwei verschiedene Signal-Typen für denselben Ticker innerhalb von 7 Tagen kommen zusammen und erreichen einen Mindest-Score, oder (b) ein <b>einzelnes, besonders starkes Signal</b> (z. B. Insider-Cluster, Kauf ≥ $100.000, Volumen-z-Score ≥ 6, Buzz-Beschleunigung ≥ 300 %, 13D-Meldung) löst sofort aus — alle 15 Min geprüft, ohne auf ein zweites Signal zu warten. Ein 7-Tage-Cooldown verhindert Alert-Spam pro Ticker. Pro Handelstag werden zusätzlich nur die stärksten Instant-Alerts per Telegram verschickt (einstellbar, Standard 5) — kommt später am Tag ein noch stärkeres Signal, geht das ebenfalls raus, auch wenn das Tageskontingent schon ausgeschöpft ist.</p>
+        <p class="info-p"><b>Die Zahl neben dem Ticker im Alert</b> ist der Rohwert des jeweils auslösenden Signals (z. B. der Volumen-z-Score oder der Buzz-Beschleunigungsfaktor) — keine einheitlich normierte Skala. Ein Wert von „7" bei einer Volumen-Anomalie (z-Score) ist nicht direkt mit einer „7" bei Buzz-Beschleunigung vergleichbar. Die genaue Bedeutung je Signaltyp steht oben in den jeweiligen Abschnitten, die vollen Rohwerte (Volumen, $-Betrag, Artikelzahlen) stehen im Signal-Feed.</p>
         <p class="info-p">Im Signal-Feed kannst du über die Filter-Chips nach einzelnen Signal-Typen filtern.</p>
         <p class="info-p"><b>Automatische Beobachtung:</b> Jeder Alert-Ticker wird automatisch mit 1 Test-Aktie zum Kurs bei Alert ins Portfolio aufgenommen (Kennzeichnung „👁 Beobachtung"). So siehst du im Portfolio-Tab die Rendite seit dem Signal, ohne selbst tätig werden zu müssen — kein echter Kauf, keine echten Kosten. Abschaltbar über <code>early_signals.auto_watch</code>.</p>
         <p class="info-p">Die aktuellsten Alerts erscheinen zusätzlich oben im <b>Dashboard</b> — unabhängig davon, ob der Ticker die News-Sentiment-Filter erfüllt (das ist ja gerade der Witz: Frühsignale kommen oft, bevor die Presse berichtet).</p>
@@ -642,7 +708,7 @@ tr:last-child td{border-bottom:none}
       </div>
 
       <div class="info-disclaimer">Kein Investment-Advice. Nur Sentiment-Daten aus Medienberichten. Keine Kauf- oder Verkaufsempfehlung.</div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.11 · 2026-07-08</p>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.12 · 2026-07-09</p>
     </div>
   </div>
 </div>
@@ -807,7 +873,7 @@ async function loadDashboardEarly() {
       return `<div class="es-alert-card">
         <div class="es-alert-hd">
           <span class="es-alert-ticker">${esc(a.ticker)}</span>
-          <span class="es-alert-score">${Math.round(a.total_score)}</span>
+          <span class="es-alert-score" title="Rohwert des auslösenden Signals (z. B. Volumen-z-Score, Buzz-Beschleunigungsfaktor) – Skala je Signaltyp unterschiedlich, Details im Signal-Feed unten bzw. in der Info">${Math.round(a.total_score)}</span>
         </div>
         <div class="es-alert-date">${esDate(a.alert_ts)}</div>
         <div class="es-alert-price">Kurs bei Alert: ${price} · automatisch im Portfolio beobachtet</div>
@@ -1123,6 +1189,21 @@ async function loadConfig() {
   document.getElementById('cfg-mc-max').value = Math.round(f.market_cap_max_usd / 1e6);
   document.getElementById('cfg-buzz-rising').checked = f.buzz_trend_rising;
   document.getElementById('cfg-top-n').value = cfg.top_n_results;
+
+  const es = cfg.early_signals || {};
+  document.getElementById('cfg-es-enabled').checked = es.enabled === true;
+  document.getElementById('cfg-es-auto-watch').checked = es.auto_watch !== false;
+  document.getElementById('cfg-es-max-alerts').value = es.max_instant_alerts_per_day ?? 5;
+  document.getElementById('cfg-es-insider-min').value = es.insider_min_usd ?? 25000;
+  document.getElementById('cfg-es-volume-z-min').value = es.volume_z_min ?? 2.5;
+  document.getElementById('cfg-es-buzz-accel-min').value = es.buzz_rel_accel_min ?? 1.0;
+  document.getElementById('cfg-es-alert-min-score').value = es.alert_min_score ?? 4;
+  document.getElementById('cfg-es-alert-min-types').value = es.alert_min_types ?? 2;
+  document.getElementById('cfg-es-alert-cooldown').value = es.alert_cooldown_days ?? 7;
+  document.getElementById('cfg-es-single-insider-min').value = es.single_insider_min_usd ?? 100000;
+  document.getElementById('cfg-es-single-volume-z-min').value = es.single_volume_z_min ?? 6.0;
+  document.getElementById('cfg-es-single-buzz-accel-min').value = es.single_buzz_accel_min ?? 3.0;
+  document.getElementById('cfg-es-single-13g-pct').value = es.single_large_holder_13g_min_pct ?? 7.0;
 }
 
 function renderTimes() {
@@ -1158,6 +1239,21 @@ async function saveConfig() {
       buzz_trend_rising: document.getElementById('cfg-buzz-rising').checked,
     },
     top_n_results: +document.getElementById('cfg-top-n').value,
+    early_signals: {
+      enabled: document.getElementById('cfg-es-enabled').checked,
+      auto_watch: document.getElementById('cfg-es-auto-watch').checked,
+      max_instant_alerts_per_day: +document.getElementById('cfg-es-max-alerts').value,
+      insider_min_usd: +document.getElementById('cfg-es-insider-min').value,
+      volume_z_min: +document.getElementById('cfg-es-volume-z-min').value,
+      buzz_rel_accel_min: +document.getElementById('cfg-es-buzz-accel-min').value,
+      alert_min_score: +document.getElementById('cfg-es-alert-min-score').value,
+      alert_min_types: +document.getElementById('cfg-es-alert-min-types').value,
+      alert_cooldown_days: +document.getElementById('cfg-es-alert-cooldown').value,
+      single_insider_min_usd: +document.getElementById('cfg-es-single-insider-min').value,
+      single_volume_z_min: +document.getElementById('cfg-es-single-volume-z-min').value,
+      single_buzz_accel_min: +document.getElementById('cfg-es-single-buzz-accel-min').value,
+      single_large_holder_13g_min_pct: +document.getElementById('cfg-es-single-13g-pct').value,
+    },
   };
   await fetch('/sentiment/api/config', { method: 'POST', body: JSON.stringify(cfg) });
   const ok = document.getElementById('save-ok');
@@ -1329,7 +1425,7 @@ async function loadEarlySignals() {
       return `<div class="es-alert-card">
         <div class="es-alert-hd">
           <span class="es-alert-ticker">${esc(a.ticker)}</span>
-          <span class="es-alert-score">${Math.round(a.total_score)}</span>
+          <span class="es-alert-score" title="Rohwert des auslösenden Signals (z. B. Volumen-z-Score, Buzz-Beschleunigungsfaktor) – Skala je Signaltyp unterschiedlich, Details im Signal-Feed unten bzw. in der Info">${Math.round(a.total_score)}</span>
         </div>
         <div class="es-alert-date">${esDate(a.alert_ts)} · ${ids.length} Signale</div>
         <div class="es-alert-price">Kurs bei Alert: ${price}</div>
