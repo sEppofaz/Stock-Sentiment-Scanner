@@ -655,24 +655,41 @@ def _write_results(data: dict):
 
 # ── Telegram ──────────────────────────────────────────────────────────────────
 
+def _split_telegram_message(text: str, limit: int = 4096) -> list[str]:
+    if len(text) <= limit:
+        return [text]
+    parts = []
+    while text:
+        if len(text) <= limit:
+            parts.append(text)
+            break
+        cut = text.rfind("\n", 0, limit)
+        if cut <= 0:
+            cut = limit
+        parts.append(text[:cut])
+        text = text[cut:].lstrip("\n")
+    return parts
+
+
 def _tg_post(text: str):
     token = os.environ.get("TOKEN", "")
     chat_id = os.environ.get("CHAT_ID", "")
     if not token or not chat_id:
         log.warning("Telegram: TOKEN oder CHAT_ID fehlt")
         return
-    try:
-        r = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
-            timeout=15,
-        )
-        if not r.ok:
-            # z.B. kaputtes HTML durch ungeschätzte externe Namen (Company-Name,
-            # Insider-Owner) → Telegram 400, Alert ging sonst stumm verloren
-            log.warning("Telegram-Fehler %s: %s", r.status_code, r.text[:200])
-    except Exception as e:
-        log.warning("Telegram-Fehler: %s", e)
+    for part in _split_telegram_message(text):
+        try:
+            r = requests.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": part, "parse_mode": "HTML"},
+                timeout=15,
+            )
+            if not r.ok:
+                # z.B. kaputtes HTML durch ungeschätzte externe Namen (Company-Name,
+                # Insider-Owner) → Telegram 400, Alert ging sonst stumm verloren
+                log.warning("Telegram-Fehler %s: %s", r.status_code, r.text[:200])
+        except Exception as e:
+            log.warning("Telegram-Fehler: %s", e)
 
 
 def _send_telegram_top5(top5: list, scanned: int):
