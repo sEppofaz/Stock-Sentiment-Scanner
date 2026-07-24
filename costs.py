@@ -16,14 +16,20 @@ _DEFAULT_PRICE = PRICING["claude-haiku-4-5-20251001"]  # Fallback bei unbekannte
 
 
 def _load() -> dict:
+    data = {"calls": [], "daily": {}, "total_cost_usd": 0.0,
+            "total_input_tokens": 0, "total_output_tokens": 0}
     if os.path.exists(COSTS_PATH):
         try:
             with open(COSTS_PATH) as f:
-                return json.load(f)
+                raw = json.load(f)
+            data.update(raw)
+            # Altbestand (z.B. Sentiment Scanner: total_cost_eur/scans/last_threshold_notified)
+            # bleibt erhalten, nur fehlende neue Keys (calls/daily/total_cost_usd/...) werden ergänzt
+            data.setdefault("calls", [])
+            data.setdefault("daily", {})
         except Exception:
             pass
-    return {"calls": [], "daily": {}, "total_cost_usd": 0.0,
-            "total_input_tokens": 0, "total_output_tokens": 0}
+    return data
 
 
 def _write(data: dict):
