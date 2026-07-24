@@ -105,6 +105,10 @@ location /sentiment/ {
 Frontend zeigt 99% wenn phase = claude oder stufe2 (nicht irreführende 100%).
 Zeitschätzung (Min verbleibend) nur während stufe1 wenn progress > 50 Ticker.
 
+## Tages-Kosten-Tracking mit Hard-Kill (2026-07-24)
+Zusätzlich zur bestehenden Lifetime-EUR-Schwelle (`_update_claude_costs`, `total_cost_eur`/`scans[]`, unverändert) trackt `costs.py` jetzt parallel ein Tages-Tracking in USD (Session = Kalendertag). Bei 1$/Tag Telegram-Info (läuft weiter), bei 5$/Tag setzt `_claude_enrich_batch()` `SCAN_STATUS["abort"]=True` und bricht die Batch-Schleife selbst ab (bestehender Abort-Skip-Pfad greift danach). `/api/costs` mergt alte+neue Felder. Details: ADR-008, `PKA/BKM/Claude-API-Kosten-Tracking.md`.
+- `costs.py`/`_load()`: bei bereits existierender `claude_costs.json` (hier: das alte EUR/scans-Format) immer `dict.update(raw)` auf einen Default-Dict, nie `return raw` direkt – sonst `KeyError` auf `calls`/`daily` (live aufgetreten beim Rollout, siehe Newsletter-CLAUDE.md für Details).
+
 ## Pitfalls
 
 - **`/news-sentiment` ist KEIN Free-Tier-Endpoint** → gibt 403 zurück → stattdessen `/company-news` verwenden
