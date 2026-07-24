@@ -509,8 +509,35 @@ tr:last-child td{border-bottom:none}
   <div class="screen" id="screen-costs">
     <div class="costs-card">
       <div class="costs-total">
+        <div class="costs-total-eur" id="costs-today-usd">$0.00</div>
+        <div class="costs-total-label">Heute (Tages-Limit $5.00)</div>
+      </div>
+      <div class="costs-threshold">
+        <div class="costs-track"><div class="costs-fill" id="costs-today-fill" style="width:0%"></div></div>
+      </div>
+      <div class="costs-grid">
+        <div class="costs-kpi">
+          <div class="costs-kpi-label">Diese Woche</div>
+          <div class="costs-kpi-val" id="costs-week-usd">$0.00</div>
+        </div>
+        <div class="costs-kpi">
+          <div class="costs-kpi-label">Dieser Monat</div>
+          <div class="costs-kpi-val" id="costs-month-usd">$0.00</div>
+        </div>
+        <div class="costs-kpi">
+          <div class="costs-kpi-label">Dieses Jahr</div>
+          <div class="costs-kpi-val" id="costs-year-usd">$0.00</div>
+        </div>
+        <div class="costs-kpi">
+          <div class="costs-kpi-label">Gesamt seit Feature-Start</div>
+          <div class="costs-kpi-val" id="costs-total-usd">$0.00</div>
+        </div>
+      </div>
+    </div>
+    <div class="costs-card">
+      <div class="costs-total">
         <div class="costs-total-eur" id="costs-eur">0,0000 €</div>
-        <div class="costs-total-label">Claude API – kumulativ (Sentiment Scanner)</div>
+        <div class="costs-total-label">Claude API – Lifetime seit Projektstart (historisch)</div>
       </div>
       <div class="costs-threshold">
         <div class="costs-threshold-row">
@@ -708,7 +735,7 @@ tr:last-child td{border-bottom:none}
       </div>
 
       <div class="info-disclaimer">Kein Investment-Advice. Nur Sentiment-Daten aus Medienberichten. Keine Kauf- oder Verkaufsempfehlung.</div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.12 · 2026-07-09</p>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.13 · 2026-07-24</p>
     </div>
   </div>
 </div>
@@ -1266,6 +1293,18 @@ async function loadCosts() {
   try {
     const r = await fetch('/sentiment/api/costs');
     const d = await r.json();
+
+    const todayUsd = (d.today && d.today.cost_usd) || 0;
+    const todayPct = Math.min(100, Math.round((todayUsd / 5.0) * 100));
+    document.getElementById('costs-today-usd').textContent = `$${todayUsd.toFixed(2)}`;
+    const todayFill = document.getElementById('costs-today-fill');
+    todayFill.style.width = todayPct + '%';
+    todayFill.style.background = todayUsd >= 5 ? 'var(--red)' : todayUsd >= 1 ? '#ff9500' : '';
+    document.getElementById('costs-week-usd').textContent  = `$${((d.week && d.week.cost_usd) || 0).toFixed(2)}`;
+    document.getElementById('costs-month-usd').textContent = `$${((d.month && d.month.cost_usd) || 0).toFixed(2)}`;
+    document.getElementById('costs-year-usd').textContent  = `$${((d.year && d.year.cost_usd) || 0).toFixed(2)}`;
+    document.getElementById('costs-total-usd').textContent = `$${(d.total_cost_usd || 0).toFixed(2)}`;
+
     const eur = d.total_cost_eur || 0;
     const threshold = Math.floor(eur) + 1;
     const pct = Math.min(100, Math.round((eur % 1) * 100));

@@ -341,6 +341,7 @@ def _do_cleanup():
 
 
 from signals_db import init_db
+import costs
 init_db()
 
 scheduler.start()
@@ -560,13 +561,19 @@ def api_portfolio_update(ticker: str):
 @app.route("/sentiment/api/costs")
 def api_costs():
     path = BASE_DIR / "claude_costs.json"
-    if not path.exists():
-        return jsonify({
+    if path.exists():
+        try:
+            raw = json.loads(path.read_text())
+        except Exception:
+            raw = {}
+    else:
+        raw = {
             "total_cost_eur": 0.0, "total_cost_usd": 0.0,
             "total_input_tokens": 0, "total_output_tokens": 0,
             "last_threshold_notified": 0, "scans": [],
-        })
-    return Response(path.read_text(), mimetype="application/json")
+        }
+    merged = {**raw, **costs.load_costs_summary()}
+    return jsonify(merged)
 
 
 @app.route("/sentiment/api/status")

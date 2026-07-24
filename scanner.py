@@ -12,6 +12,8 @@ from collections import Counter
 from pathlib import Path
 from datetime import datetime
 
+import costs
+
 log = logging.getLogger("scanner")
 
 FINNHUB_KEY = os.environ.get("FINNHUB_API_KEY", "")
@@ -258,6 +260,26 @@ def _claude_enrich_batch(candidates: list[dict], token_acc: dict) -> None:
             )
             token_acc["input_tokens"]  += resp.usage.input_tokens
             token_acc["output_tokens"] += resp.usage.output_tokens
+
+            cost_result = costs.record_call(
+                "claude-haiku-4-5-20251001", resp.usage.input_tokens, resp.usage.output_tokens,
+                context="scan",
+            )
+            if cost_result["warn_1usd"]:
+                _tg_post(
+                    f"📊 1$ Tagesverbrauch (Claude API) erreicht (heute: ${cost_result['day_total_usd']:.2f}).\n"
+                    f"Scan läuft normal weiter."
+                )
+            if cost_result["hard_kill"]:
+                SCAN_STATUS["abort"] = True
+                remaining = len(candidates) - (i + len(batch))
+                _tg_post(
+                    f"📊 5$ Tagesverbrauch (Claude API) erreicht (heute: ${cost_result['day_total_usd']:.2f}) "
+                    f"– Scan selbstständig abgebrochen.\n"
+                    f"Übersprungen: {remaining} von {len(candidates)} verbleibenden Tickern nicht mehr KI-angereichert.\n"
+                    f"Bereits verarbeitete Ticker behalten ihr Ergebnis. Lifetime-Kosten-Schwelle (Kosten-Tab) unabhängig davon unverändert."
+                )
+                break
 
             m = re.search(r'\[.*?\]', resp.content[0].text.strip(), re.DOTALL)
             if not m:
