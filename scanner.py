@@ -13,6 +13,7 @@ from pathlib import Path
 from datetime import datetime
 
 import costs
+import signals_db
 
 log = logging.getLogger("scanner")
 
@@ -546,6 +547,7 @@ def _run_scan_inner(cfg: dict) -> dict:
         log.warning("Scan abgebrochen – results.json bleibt unverändert (letztes gutes Ergebnis erhalten), kein Telegram-Versand")
     else:
         _write_results(output)
+        _write_scan_snapshot(output["scanned_at"], top_n)
         _send_telegram_top5(top_n[:5], len(tickers))
 
     # Portfolio-Quote und Wert aktualisieren – frisch von der Platte laden,
@@ -700,6 +702,16 @@ def _write_results(data: dict):
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
     tmp.rename(path)
+
+
+def _write_scan_snapshot(scanned_at: str, top_n: list[dict]) -> None:
+    """Persistiert die Top-N-Score-Komponenten in signals.db (scan_snapshots) –
+    results.json wird bei jedem Scan überschrieben, hier bleibt die Zeitreihe
+    für die wöchentliche Performance-Analyse erhalten (weekly_analysis.py)."""
+    try:
+        signals_db.insert_scan_snapshots(scanned_at, top_n)
+    except Exception:
+        log.exception("Scan-Snapshot konnte nicht gespeichert werden")
 
 
 # ── Telegram ──────────────────────────────────────────────────────────────────

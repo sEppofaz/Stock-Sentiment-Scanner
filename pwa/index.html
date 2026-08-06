@@ -210,6 +210,17 @@ tr:last-child td{border-bottom:none}
 .es-stat-ret.neg{color:var(--red)}
 .es-stat-n{font-size:.7rem;color:var(--muted);margin-top:4px}
 .es-empty{text-align:center;padding:24px 16px;color:var(--muted);font-size:.9rem}
+.an-row{display:flex;justify-content:space-between;font-size:.8rem;padding:5px 0;border-bottom:1px solid var(--border)}
+.an-row:last-child{border-bottom:none}
+.an-groups{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.an-examples{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.an-actions{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+.btn-an-run{flex:1;min-width:140px;padding:12px;background:var(--accent);color:#fff;border:none;border-radius:12px;font-size:.85rem;font-weight:700;cursor:pointer;min-height:44px}
+.btn-an-run:active:not(:disabled){opacity:.8}
+.btn-an-ai{flex:1;min-width:140px;padding:12px;background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:12px;font-size:.85rem;font-weight:700;cursor:pointer;min-height:44px}
+.btn-an-ai:active:not(:disabled){opacity:.8}
+.btn-an-run:disabled,.btn-an-ai:disabled{opacity:.5;cursor:not-allowed}
+.an-ai-text{background:var(--bg2);border-radius:12px;padding:14px;margin-top:14px;font-size:.85rem;line-height:1.5;white-space:pre-wrap}
 .es-alert-card{background:var(--bg2);border-radius:14px;padding:14px;margin-bottom:10px}
 .es-alert-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
 .es-alert-ticker{font-size:1rem;font-weight:700}
@@ -287,6 +298,10 @@ tr:last-child td{border-bottom:none}
     <button class="tab" onclick="switchTab('early')" id="tab-early">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
       Früh
+    </button>
+    <button class="tab" onclick="switchTab('analysis')" id="tab-analysis">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg>
+      Analyse
     </button>
   </div>
 </header>
@@ -589,6 +604,24 @@ tr:last-child td{border-bottom:none}
     <div id="es-signals-empty" style="display:none" class="es-empty">Noch keine Signale erfasst.</div>
   </div>
 
+  <!-- Wöchentliche Performance-Analyse -->
+  <div class="screen" id="screen-analysis">
+    <div class="es-note">Vergleicht positiv vs. negativ performende Empfehlungen (Kursrendite 20 Handelstage später) – zeigt, welche Eigenschaften sie gemeinsam hatten. Erste aussagekräftige Ergebnisse erst nach mehreren Wochen Datensammlung.</div>
+
+    <div class="es-filter-row" id="an-toggle">
+      <button class="es-filter-chip active" onclick="switchAnalysisSystem('sentiment')" id="an-sys-sentiment">Sentiment-Scan</button>
+      <button class="es-filter-chip" onclick="switchAnalysisSystem('early_signals')" id="an-sys-early">Frühsignale</button>
+    </div>
+
+    <div id="an-content"></div>
+
+    <div class="an-actions">
+      <button class="btn-an-run" id="btn-an-run" onclick="runAnalysis()">Jetzt analysieren</button>
+      <button class="btn-an-ai" id="btn-an-ai" onclick="runAnalysisAI()" title="Kostet ca. $0.01–0.05 pro Klick (Claude Haiku)">✨ KI-Analyse</button>
+    </div>
+    <div id="an-ai-text"></div>
+  </div>
+
 </main>
 
 <button class="back-top" id="back-top" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
@@ -772,6 +805,7 @@ function refreshCurrent() {
   if (tab === 'dashboard') loadResults();
   else if (tab === 'portfolio') loadPortfolio();
   else if (tab === 'early') loadEarlySignals();
+  else if (tab === 'analysis') loadAnalysis();
 }
 
 // ── Scroll-to-Top ─────────────────────────────────────────────────────────
@@ -790,6 +824,7 @@ function switchTab(name) {
   if (name === 'dashboard') loadResults();
   if (name === 'costs') loadCosts();
   if (name === 'early') loadEarlySignals();
+  if (name === 'analysis') loadAnalysis();
 }
 
 // ── Scan-Status-Polling ───────────────────────────────────────────────────
@@ -1481,6 +1516,142 @@ async function loadEarlySignals() {
   } catch (e) {
     document.getElementById('es-signals-empty').style.display = 'block';
     document.getElementById('es-signals-empty').textContent = 'Fehler beim Laden.';
+  }
+}
+
+// ── Wöchentliche Performance-Analyse ────────────────────────────────────────
+let _anSystem = 'sentiment';
+
+function switchAnalysisSystem(sys) {
+  _anSystem = sys;
+  document.getElementById('an-sys-sentiment').classList.toggle('active', sys === 'sentiment');
+  document.getElementById('an-sys-early').classList.toggle('active', sys === 'early_signals');
+  document.getElementById('an-ai-text').innerHTML = '';
+  loadAnalysis();
+}
+
+function anFmtPct(v) {
+  return v == null ? '–' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
+}
+
+function anRow(label, value) {
+  return `<div class="an-row"><span>${esc(label)}</span><span>${value}</span></div>`;
+}
+
+function anFmtStat(stat) {
+  if (!stat || stat.mean == null) return '–';
+  return `Ø ${stat.mean}${stat.median != null ? ' · Med ' + stat.median : ''}`;
+}
+
+function anGroupCard(title, g, system) {
+  if (!g || !g.n) {
+    return `<div class="es-alert-card"><div class="es-stat-h">${esc(title)}</div><div class="es-empty" style="padding:12px">Keine Daten</div></div>`;
+  }
+  const retCls = g.avg_ret_pct >= 0 ? 'pos' : 'neg';
+  let rows;
+  if (system === 'sentiment') {
+    rows = anRow('Bullish %', anFmtStat(g.stats.bullish_pct))
+      + anRow('Bearish %', anFmtStat(g.stats.bearish_pct))
+      + anRow('Buzz', anFmtStat(g.stats.buzz))
+      + anRow('NLP-Score', anFmtStat(g.stats.sentiment_norm))
+      + anRow('KGV', anFmtStat(g.stats.pe))
+      + anRow('Score', anFmtStat(g.stats.score))
+      + anRow('Portfolio-Pin', g.pinned_pct != null ? `${g.pinned_pct}%` : '–');
+  } else {
+    rows = anRow('Ø Signal-Score', g.avg_total_score != null ? g.avg_total_score : '–')
+      + anRow('Insider-Cluster', g.insider_cluster_pct != null ? `${g.insider_cluster_pct}%` : '–')
+      + anRow('Insider-Betrag ($)', anFmtStat(g.insider_buy_total_usd))
+      + anRow('Volumen-z-Score', anFmtStat(g.volume_z_score))
+      + anRow('Buzz-Beschleunigung', anFmtStat(g.buzz_rel_accel))
+      + anRow('13D/13G-Anteil (%)', anFmtStat(g.large_holder_pct));
+  }
+  const examples = (g.examples || []).map(e =>
+    `<span class="chip${e.ret_pct >= 0 ? ' green' : ' red'}">${esc(e.ticker)} ${anFmtPct(e.ret_pct)}</span>`
+  ).join('');
+  return `<div class="es-alert-card">
+    <div class="es-stat-h">${esc(title)} (n=${g.n})</div>
+    <div class="es-stat-ret ${retCls}" style="font-size:1.05rem;margin-bottom:8px">Ø ${anFmtPct(g.avg_ret_pct)}</div>
+    ${rows}
+    ${examples ? `<div class="an-examples">${examples}</div>` : ''}
+  </div>`;
+}
+
+async function loadAnalysis() {
+  const content = document.getElementById('an-content');
+  content.innerHTML = '<div class="es-empty">Lädt…</div>';
+  try {
+    const r = await fetch(`/sentiment/api/analysis/latest?system=${_anSystem}`);
+    const d = await r.json();
+
+    if (!d.exists) {
+      content.innerHTML = '<div class="es-note">Noch keine Analyse durchgeführt. Auf „Jetzt analysieren" klicken (kostenlos).</div>';
+      return;
+    }
+
+    const rep = d.report_json;
+    if (rep.insufficient_data) {
+      const eta = rep.eta_weeks;
+      const etaTxt = eta != null ? ` – voraussichtlich noch ~${eta} Woche${eta === 1 ? '' : 'n'}.` : '';
+      content.innerHTML = `<div class="es-note">Noch nicht genug Daten für eine belastbare Analyse: ${rep.sample_size}/${rep.min_sample} gereifte Datenpunkte.${etaTxt}</div>`;
+      return;
+    }
+
+    const methodNote = rep.grouping_method === 'quartile_fallback'
+      ? '<div class="es-note">Kleine Stichprobe – Gruppen basieren auf oberstem/unterstem Quartil statt fixem Schwellenwert.</div>' : '';
+
+    content.innerHTML = `
+      ${methodNote}
+      <div style="font-size:.75rem;color:var(--muted);margin-bottom:10px">
+        Zeitraum ${rep.period_start} – ${rep.period_end} · n=${rep.sample_size} · Schwellen ${anFmtPct(rep.thresholds.pos)} / ${anFmtPct(rep.thresholds.neg)}
+      </div>
+      <div class="an-groups">
+        ${anGroupCard('Positiv', rep.pos_group, _anSystem)}
+        ${anGroupCard('Negativ', rep.neg_group, _anSystem)}
+      </div>`;
+
+    if (d.ai_text) {
+      document.getElementById('an-ai-text').innerHTML =
+        `<div class="an-ai-text"><b>✨ KI-Interpretation</b> (${esDate(d.ai_generated_ts)})<br><br>${esc(d.ai_text)}</div>`;
+    }
+  } catch (e) {
+    content.innerHTML = '<div class="es-empty">Fehler beim Laden.</div>';
+  }
+}
+
+async function runAnalysis() {
+  const btn = document.getElementById('btn-an-run');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/sentiment/api/analysis/run', {
+      method: 'POST',
+      body: JSON.stringify({ system: _anSystem }),
+    });
+    if (!r.ok) { alert('Analyse fehlgeschlagen.'); return; }
+    await loadAnalysis();
+  } catch (e) {
+    alert('Analyse fehlgeschlagen.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function runAnalysisAI() {
+  if (!confirm('Die KI-Analyse ruft Claude auf und verursacht Kosten (ca. $0.01–0.05 pro Klick). Fortfahren?')) return;
+  const btn = document.getElementById('btn-an-ai');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/sentiment/api/analysis/run-ai', {
+      method: 'POST',
+      body: JSON.stringify({ system: _anSystem }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) { alert(d.error || 'KI-Analyse fehlgeschlagen.'); return; }
+    document.getElementById('an-ai-text').innerHTML =
+      `<div class="an-ai-text"><b>✨ KI-Interpretation</b> (Kosten: $${d.cost_usd.toFixed(4)}, heute gesamt $${d.day_total_usd.toFixed(2)})<br><br>${esc(d.text)}</div>`;
+  } catch (e) {
+    alert('KI-Analyse fehlgeschlagen.');
+  } finally {
+    btn.disabled = false;
   }
 }
 

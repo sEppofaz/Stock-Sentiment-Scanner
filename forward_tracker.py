@@ -2,9 +2,8 @@
 import logging
 from datetime import datetime, timezone
 
-import yfinance as yf
-
 from signals_db import get_conn
+from yf_helper import fetch_closes
 
 log = logging.getLogger("scanner")
 
@@ -27,14 +26,8 @@ def run_tracker(cfg: dict) -> None:
     for (ticker, alert_id), rows in by_alert.items():
         alert_ts = rows[0]["alert_ts"]
         price_at_alert = rows[0]["price_at_alert"]
-        try:
-            hist = yf.download(ticker, start=alert_ts[:10], interval="1d",
-                               progress=False, auto_adjust=False)
-            # yfinance liefert auch bei einzelnem String-Ticker MultiIndex-Spalten
-            # (verifiziert 2026-07-06) -> hist["Close"] ist ein DataFrame, kein Series.
-            closes = hist["Close"][ticker].dropna()
-        except Exception as e:
-            log.warning("Tracker %s: %s", ticker, e)
+        closes = fetch_closes(ticker, alert_ts[:10])
+        if closes is None:
             continue
         for r in rows:
             # Zeile 0 = Alert-Tag; Horizont h = h Handelstage danach

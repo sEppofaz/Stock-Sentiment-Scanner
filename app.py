@@ -177,6 +177,22 @@ def _reschedule():
         _do_cleanup, "cron", hour=3, minute=0, timezone="UTC", id="daily_cleanup",
     )
 
+    # Scan-Snapshot-Tracker (wöchentliche Performance-Analyse, Sentiment-Scan-Teil):
+    # 15 Min nach es_tracker (17:45 ET), keine Finnhub-Konkurrenz da nur yfinance
+    scheduler.add_job(
+        _do_scan_tracker, "cron", hour=18, minute=0,
+        day_of_week="mon-fri", timezone="America/New_York", id="scan_tracker",
+    )
+
+    # Wöchentliche Performance-Analyse: Mo 06:50 ET, kollidiert mit keinem der
+    # Minuten-Raster oben (0/15/30/45, 4/19/34/49, 8/23/38/53), vor Marktöffnung,
+    # rein SQL-basiert (kein Finnhub/yfinance-Call in der Analyse selbst)
+    if cfg.get("weekly_analysis", {}).get("enabled", True):
+        scheduler.add_job(
+            _do_weekly_analysis, "cron", hour=6, minute=50,
+            day_of_week="mon", timezone="America/New_York", id="weekly_analysis",
+        )
+
     # Frühsignale (EARLY_SIGNALS_UMSETZUNG.md)
     if cfg.get("early_signals", {}).get("enabled", False):
         # Die vier 15-Min-Jobs (edgar/ownership/es_instant/portfolio_scan) sind
@@ -328,6 +344,27 @@ def _do_es_instant():
         check_instant_alerts(cfg)
     except Exception:
         log.exception("Instant-Alert-Check fehlgeschlagen")
+
+
+def _do_scan_tracker():
+    if not _load_cfg().get("scan_enabled", True):
+        return
+    try:
+        from scan_tracker import run_scan_tracker
+        run_scan_tracker(_load_cfg())
+    except Exception:
+        log.exception("Scan-Tracker fehlgeschlagen")
+
+
+def _do_weekly_analysis():
+    cfg = _load_cfg()
+    if not cfg.get("weekly_analysis", {}).get("enabled", True):
+        return
+    try:
+        from weekly_analysis import run_weekly_analysis
+        run_weekly_analysis(cfg)
+    except Exception:
+        log.exception("Wöchentliche Analyse fehlgeschlagen")
 
 
 def _do_cleanup():
@@ -602,6 +639,58 @@ def api_early_signals():
             "SUM(CASE WHEN ret_pct > 0 THEN 1 ELSE 0 END)*100.0/COUNT(*) hit_rate "
             "FROM forward_returns WHERE ret_pct IS NOT NULL GROUP BY horizon_days")]
     return jsonify({"signals": signals, "alerts": alerts, "stats": stats})
+
+
+# ── API: Wöchentliche Performance-Analyse ──────────────────────────────────────
+
+@app.route("/sentiment/api/analysis/latest")
+def api_analysis_latest():
+    system = request.args.get("system", "")
+    if system not in ("sentiment", "early_signals"):
+        return jsonify({"error": "system muss 'sentiment' oder 'early_signals' sein"}), 400
+    from weekly_analysis import get_latest_report
+    report = get_latest_report(system)
+    if report is None:
+        return jsonify({"exists": False, "system": system})
+    return jsonify({"exists": True, **report})
+
+
+@app.route("/sentiment/api/analysis/run", methods=["POST"])
+def api_analysis_run():
+    body = request.get_json(force=True, silent=True) or {}
+    system = body.get("system", "")
+    if system not in ("sentiment", "early_signals"):
+        return jsonify({"error": "system muss 'sentiment' oder 'early_signals' sein"}), 400
+    try:
+        from weekly_analysis import analyze_and_store
+        report = analyze_and_store(_load_cfg(), system)
+        return jsonify({"ok": True, **report})
+    except Exception:
+        log.exception("Analyse fehlgeschlagen (%s)", system)
+        return jsonify({"ok": False, "error": "Analyse fehlgeschlagen"}), 500
+
+
+@app.route("/sentiment/api/analysis/run-ai", methods=["POST"])
+def api_analysis_run_ai():
+    body = request.get_json(force=True, silent=True) or {}
+    system = body.get("system", "")
+    if system not in ("sentiment", "early_signals"):
+        return jsonify({"error": "system muss 'sentiment' oder 'early_signals' sein"}), 400
+    from weekly_analysis import get_latest_report, generate_ai_text
+    report_row = get_latest_report(system)
+    if report_row is None:
+        return jsonify({"ok": False, "error": "Noch keine Analyse für dieses System vorhanden"}), 400
+    try:
+        result = generate_ai_text(report_row, system)
+        return jsonify({"ok": True, **result})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except RuntimeError as e:
+        # Tages-Kostenlimit erreicht – kein 500, ist erwartbar
+        return jsonify({"ok": False, "error": str(e)}), 429
+    except Exception:
+        log.exception("KI-Analyse fehlgeschlagen (%s)", system)
+        return jsonify({"ok": False, "error": "KI-Analyse fehlgeschlagen"}), 500
 
 
 if __name__ == "__main__":

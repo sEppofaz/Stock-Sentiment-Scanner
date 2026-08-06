@@ -11,6 +11,13 @@
     "news_min_count": 3
   },
   "top_n_results": 50,
+  "weekly_analysis": {
+    "enabled": true,
+    "sentiment_pos_threshold_pct": 10,
+    "sentiment_neg_threshold_pct": -10,
+    "early_signals_pos_threshold_pct": 15,
+    "early_signals_neg_threshold_pct": -15
+  },
   "early_signals": {
     "enabled": false,
     "insider_min_usd": 25000,

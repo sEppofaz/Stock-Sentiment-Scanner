@@ -48,6 +48,47 @@ CREATE TABLE IF NOT EXISTS forward_returns (
     filled_ts     TEXT,
     PRIMARY KEY (alert_id, horizon_days)
 );
+
+CREATE TABLE IF NOT EXISTS scan_snapshots (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker            TEXT NOT NULL,
+    snapshot_ts       TEXT NOT NULL,   -- = results.json scanned_at des Vollscans, ISO 8601 UTC
+    rank              INTEGER,         -- Position in Top-N (1 = höchster Score)
+    score             REAL,
+    bullish_pct       REAL,
+    bearish_pct       REAL,
+    buzz              REAL,
+    articles_week     INTEGER,
+    sentiment_norm    REAL,
+    market_cap        INTEGER,
+    pe                REAL,
+    pinned            INTEGER NOT NULL DEFAULT 0,
+    price_at_snapshot REAL,            -- NULL bis scan_tracker.py sie nachträgt (yfinance Tages-Close)
+    UNIQUE(ticker, snapshot_ts)
+);
+CREATE INDEX IF NOT EXISTS idx_scan_snapshots_ticker_ts ON scan_snapshots(ticker, snapshot_ts);
+
+CREATE TABLE IF NOT EXISTS scan_forward_returns (
+    snapshot_id   INTEGER NOT NULL REFERENCES scan_snapshots(id),
+    horizon_days  INTEGER NOT NULL,   -- 1 | 5 | 20 (Handelstage), gleiche Horizonte wie forward_returns
+    ret_pct       REAL,
+    filled_ts     TEXT,
+    PRIMARY KEY (snapshot_id, horizon_days)
+);
+
+CREATE TABLE IF NOT EXISTS weekly_reports (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_ts          TEXT NOT NULL,   -- ISO 8601 UTC, Erzeugungszeitpunkt
+    system             TEXT NOT NULL,   -- 'sentiment' | 'early_signals'
+    period_start       TEXT NOT NULL,
+    period_end         TEXT NOT NULL,
+    sample_size        INTEGER NOT NULL,
+    insufficient_data  INTEGER NOT NULL DEFAULT 0,
+    report_json        TEXT NOT NULL,
+    ai_text            TEXT,
+    ai_generated_ts    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_weekly_reports_system_ts ON weekly_reports(system, report_ts DESC);
 """
 
 
@@ -87,8 +128,10 @@ def init_db():
 
 def cleanup_old_data() -> tuple[int, int]:
     """Prunt operative Historientabellen, die unbegrenzt wachsen (M8).
-    signals/alerts/forward_returns bleiben unangetastet – das ist die
-    Validierungshistorie (Trefferquote/Rendite), die soll erhalten bleiben."""
+    signals/alerts/forward_returns sowie scan_snapshots/scan_forward_returns/
+    weekly_reports bleiben unangetastet – das ist die Validierungshistorie
+    (Trefferquote/Rendite, wöchentliche Performance-Analyse), die soll
+    erhalten bleiben."""
     with get_conn() as conn:
         buzz_deleted = conn.execute(
             "DELETE FROM buzz_history WHERE date < date('now', '-60 days')"
@@ -117,3 +160,32 @@ def upsert_buzz_rows(rows: list[tuple]) -> None:
             "VALUES (?, ?, ?, ?)",
             rows,
         )
+
+
+def insert_scan_snapshots(snapshot_ts: str, top_n: list[dict]) -> None:
+    """Persistiert die Top-N-Ergebnisse eines Vollscans als Snapshot-Historie
+    (results.json wird bei jedem Scan überschrieben, hier bleibt die Zeitreihe
+    erhalten). Legt pro Snapshot sofort die drei offenen scan_forward_returns-
+    Zeilen an (ret_pct NULL) – analog layer4_scoring._create_alert()."""
+    with get_conn() as conn:
+        for rank, r in enumerate(top_n, start=1):
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO scan_snapshots "
+                "(ticker, snapshot_ts, rank, score, bullish_pct, bearish_pct, buzz, "
+                " articles_week, sentiment_norm, market_cap, pe, pinned) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    r["ticker"], snapshot_ts, rank, r.get("score"),
+                    r.get("bullish_pct"), r.get("bearish_pct"), r.get("buzz"),
+                    r.get("articles_week"), r.get("sentiment_norm"),
+                    r.get("market_cap"), r.get("pe"), 1 if r.get("pinned") else 0,
+                ),
+            )
+            if cur.rowcount == 0:
+                continue
+            snapshot_id = cur.lastrowid
+            conn.executemany(
+                "INSERT OR IGNORE INTO scan_forward_returns (snapshot_id, horizon_days) "
+                "VALUES (?, ?)",
+                [(snapshot_id, h) for h in (1, 5, 20)],
+            )
