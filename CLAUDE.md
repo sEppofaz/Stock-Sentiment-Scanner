@@ -268,6 +268,17 @@ Neue dritte Analyse-Dimension `cross_signal` (neben `sentiment`/`early_signals`)
 - **PWA:** dritter System-Toggle „Cross-Signal" im Analyse-Tab, eigene `anCrossCard()`-Rendering-Funktion (einfacher als `anGroupCard()`, da keine Score-Komponenten-Vergleiche nötig).
 - **`app.py`-Endpoints:** alle drei (`/latest`, `/run`, `/run-ai`) akzeptieren jetzt `system=cross_signal` zusätzlich zu `sentiment`/`early_signals`.
 
+## Backfill des letzten historischen Scans (einmalig, 2026-08-06)
+
+Josef-Wunsch: Datensammlung ein paar Wochen rückwirkend nachholen, um nicht 5-6 Wochen auf erste Ergebnisse warten zu müssen. **Echtes Backfill für den Sentiment-Scan ist NICHT sauber möglich** und wurde deshalb bewusst nicht gebaut:
+
+- `/stock/metric` (MarketCap, KGV, Volumen, Beta) liefert bei Finnhub Free-Tier nur den **aktuellen** Wert, keine Zeitreihe – ein nachträglicher Abruf für einen 3 Wochen alten Snapshot würde heutige Werte in einen historischen Kontext mischen (Look-Ahead-Bias), was die Analyse verfälschen statt verbessern würde.
+- `results.json` wird bei jedem Vollscan überschrieben – es existiert kein Archiv der Top-N-Listen früherer Tage. Log-Historie (`scan.log`) zeigt 21 vollständige Scans zwischen 2026-06-22 und 2026-07-06 (danach Lücke bis 2026-08-06 durch den `scan_enabled`-Bug), aber nur die Zusammenfassung („N Ergebnisse"), keine Ticker-Details – nicht rekonstruierbar.
+- **Einzige saubere Ausnahme:** Der allerletzte vollständige Scan (2026-07-06, 16:33 UTC, 10 Ticker) lag noch vollständig und unverzerrt in `results.json` vor (alle Felder wurden damals erfasst, keine nachträgliche Aktualisierung nötig). Einmalig per Skript in `scan_snapshots` nachgetragen (`signals_db.insert_scan_snapshots()` direkt aufgerufen), danach `scan_tracker.run_scan_tracker()` einmalig manuell ausgeführt – das 20-Handelstage-Fenster war bereits verstrichen, alle Renditen sofort verfügbar (u.a. JLHL +68,3%, war zwischenzeitlich bei +124,7% nach 5 Tagen).
+- **Ergebnis:** `sample_size` für `system=sentiment` sprang von 0 auf 10 (weiterhin `insufficient_data=true`, `MIN_SAMPLE=15`), `eta_weeks` zeigt jetzt eine reale Schätzung (~2 Wochen) statt `null`. Kein fingierter Fortschritt – reale, historisch korrekte Daten.
+- **Josef hat explizit abgelehnt**, `MIN_SAMPLE` testweise zu senken oder Ergebnisse trotz zu kleiner Stichprobe anzuzeigen ("lieber ehrlich warten") – dabei bleibt es, keine Preview-Modus-Implementierung.
+- **Telegram-Historie als mögliche weitere Quelle besprochen, aber nicht umgesetzt:** Bot-API kann keine gesendete Nachrichten-Historie auslesen (Plattform-Limitierung, keine Berechtigungsfrage) – Josef müsste ggf. über Telegram Desktops „Chat exportieren"-Funktion eine Datei bereitstellen, aus der sich weitere historische Top-5-Listen (22.06.–06.07., ca. 15 Scan-Läufe) extrahieren ließen. Offen, kein Termin vereinbart.
+
 ## tickers.csv erneuern (quartalsweise)
 
 ```bash
