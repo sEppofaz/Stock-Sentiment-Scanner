@@ -609,6 +609,17 @@ def _run_portfolio_scan_inner(portfolio: list[dict]) -> None:
         sent = _fetch_sentiment(ticker)
         price = _fetch_quote(ticker)
 
+        # Kurs unabhängig vom Sentiment-Fetch aktualisieren (z.B. bei Finnhub
+        # 503 auf /company-news soll die parallel erfolgreiche Kursabfrage
+        # trotzdem gespeichert werden, statt durch das folgende continue verworfen)
+        if price:
+            entry["current_price"] = price
+            entry["current_value"] = round(price * entry.get("shares", 0), 2)
+            cost = entry.get("buy_price", 0) * entry.get("shares", 0)
+            entry["pnl"] = round(entry["current_value"] - cost, 2)
+            entry["pnl_pct"] = round((entry["pnl"] / cost * 100) if cost else 0, 2)
+            changed = True
+
         if sent is None:
             continue
 
@@ -634,12 +645,6 @@ def _run_portfolio_scan_inner(portfolio: list[dict]) -> None:
             "price": price,
             "scanned_at": datetime.utcnow().isoformat() + "Z",
         }
-        if price:
-            entry["current_price"] = price
-            entry["current_value"] = round(price * entry.get("shares", 0), 2)
-            cost = entry.get("buy_price", 0) * entry.get("shares", 0)
-            entry["pnl"] = round(entry["current_value"] - cost, 2)
-            entry["pnl_pct"] = round((entry["pnl"] / cost * 100) if cost else 0, 2)
         changed = True
 
     if changed:
