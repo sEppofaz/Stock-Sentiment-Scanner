@@ -67,9 +67,16 @@ location /sentiment/ {
 ├── venv/               # eigenes venv
 ├── app.py              # Flask + APScheduler + Icon-Serving + /api/costs
 ├── scanner.py          # Finnhub-Calls, Filter, Claude-Sentiment, Score, Telegram, Kosten
+├── signals_db.py        # SQLite-Layer (signals.db): Frühsignale + Scan-Snapshot-Historie + Weekly-Reports
+├── layer1_edgar.py .. layer5_ownership.py  # Frühsignal-Layer (Insider/Volumen/Buzz/Scoring/13D-13G)
+├── forward_tracker.py  # füllt forward_returns (Frühsignal-Alerts, 1/5/20 Handelstage)
+├── scan_tracker.py     # füllt scan_forward_returns (Sentiment-Scan-Snapshots, 1/5/20 Handelstage)
+├── yf_helper.py         # gemeinsamer yfinance-Zugriff für beide Tracker (ADR-010)
+├── weekly_analysis.py   # wöchentliche Performance-Analyse (regelbasiert + optionaler KI-Button)
 ├── config.json         # editierbar per PWA (keine Credentials!)
 ├── tickers.csv         # Russell 2000 Ticker (gitignored, quartalsweise neu laden)
 ├── results.json        # letztes Scan-Ergebnis (gitignored)
+├── signals.db           # SQLite: signals/alerts/forward_returns + scan_snapshots/scan_forward_returns/weekly_reports (gitignored, WAL)
 ├── claude_costs.json   # kumulative Claude API Kosten (gitignored, wird automatisch angelegt)
 ├── portfolio.json      # persönliche Portfolio-Einträge (gitignored – enthält Kaufpreise!)
 ├── scan.log            # Protokoll (gitignored)
@@ -77,7 +84,7 @@ location /sentiment/ {
 ├── requirements.txt
 ├── fetch_tickers.py    # Finnhub /stock/symbol?exchange=US → tickers.csv (quartalsweise)
 └── pwa/
-    ├── index.html      # 4 Tabs: Dashboard, Portfolio, Einstellungen, Kosten
+    ├── index.html      # 5 Tabs: Dashboard, Portfolio, Kosten, Früh, Analyse (Einstellungen als Header-Icon)
     ├── manifest.json
     └── sw.js
 ```
@@ -221,8 +228,24 @@ Vollständiger unabhängiger Code-Review (4 kritisch, 9 mittel, 10 gering). K4 (
 - **G8 `api_portfolio_add`:** `float()` auf Garbage-Input warf 500 statt 400. Fix: `try/except` mit sauberer 400-Antwort.
 - **G9 Gunicorn-Falle (neu dokumentiert):** `scheduler.start()` + `init_db()` laufen auf Modulebene in `app.py`. Aktuell unkritisch (`python3 app.py` direkt im systemd-Unit, kein Multi-Worker). **Bei künftigem Wechsel auf gunicorn mit >1 Worker würden alle Scheduler-Jobs mehrfach laufen** (doppelte Scans, doppelte Telegram-Alerts) – vorher WSGI-Server-Wechsel hier eintragen und Guard einbauen (z.B. nur in Worker 0 starten).
 - **G10 Server-Lokalzeit bei `_day_counts` (neu dokumentiert):** `_fetch_sentiment()` nutzt `date.fromtimestamp(...)` (scanner.py) → Server-Lokalzeit (Europe/Berlin), nicht UTC oder US-Handelstag. US-Abendnews (nach 18 Uhr ET) rutschen auf den Berliner Folgetag in `buzz_history`. In sich konsistent (Layer 3 rechnet mit derselben Zeitbasis), aber „Handelstag"-Semantik ist gegenüber ET verschoben – bewusst nicht geändert (Breaking Change für bestehende buzz_history-Daten), nur dokumentiert.
-- **Pitfall yfinance:** `yf.download(tickers=[...], group_by="ticker")` liefert bei Listen- UND bei Einzel-String-Übergabe IMMER MultiIndex-Spalten. Bei Liste: `data[sym]["Volume"]` (auch bei 1 Ticker im Chunk). Bei Einzel-Ticker-String (kein `group_by`, wie im Forward-Tracker): `hist["Close"]` ist ein **DataFrame**, nicht Series → `hist["Close"][ticker]` nötig, sonst crasht `float(...)` für jeden Ticker (verifiziert 2026-07-06, Spec hatte hier einen Fehler)
+- **Pitfall yfinance:** `yf.download(tickers=[...], group_by="ticker")` liefert bei Listen- UND bei Einzel-String-Übergabe IMMER MultiIndex-Spalten. Bei Liste: `data[sym]["Volume"]` (auch bei 1 Ticker im Chunk). Bei Einzel-Ticker-String (kein `group_by`, wie im Forward-Tracker): `hist["Close"]` ist ein **DataFrame**, nicht Series → `hist["Close"][ticker]` nötig, sonst crasht `float(...)` für jeden Ticker (verifiziert 2026-07-06, Spec hatte hier einen Fehler). **Seit 2026-08-06 zentral in `yf_helper.fetch_closes()`** (ADR-010) – `forward_tracker.py` und `scan_tracker.py` nutzen beide diese eine Stelle, ein künftiger Fix muss nicht mehr an zwei Stellen gepflegt werden.
 - `_day_counts` (wie `_news_texts`) nie persistieren – wird vor results.json/portfolio.json gestrippt
+
+## Wöchentliche Performance-Analyse (2026-08-06)
+
+Josef-Wunsch: wöchentlich sehen, was positiv vs. negativ performende Empfehlungen gemeinsam haben, getrennt für Sentiment-Scan und Frühsignale (unterschiedliche Feature-Sets/Zeithorizonte), um die Scoring-Logik ggf. neu bewerten zu können.
+
+- **Datenmodell (`signals_db.py`):** Neue Tabellen `scan_snapshots` (Score-Komponenten je Top-N-Ticker pro Vollscan – existierte bisher nicht, `results.json` wird bei jedem Scan überschrieben), `scan_forward_returns` (Kursrendite 1/5/20 Handelstage später, analog `forward_returns`), `weekly_reports` (gespeicherte Analyseergebnisse inkl. optionalem KI-Text). Bewusst eigene Tabellen statt Erweiterung von `alerts`/`forward_returns` – Begründung in ADR-009. Alle drei bleiben von `cleanup_old_data()` unangetastet (Validierungshistorie, wie `alerts`/`forward_returns`).
+- **`_write_scan_snapshot()`** in `scanner.py`, aufgerufen direkt nach `_write_results()` in `_run_scan_inner()` (nur im nicht-aborted-Zweig) – schreibt die Top-N-Ergebnisse zusätzlich in `scan_snapshots`.
+- **Referenzkurs-Entscheidung:** `price_at_snapshot` kommt NICHT von einem extra Finnhub-Call, sondern wird von `scan_tracker.py` beim ersten Tracker-Lauf aus derselben yfinance-Tages-Close-Reihe entnommen wie der Forward-Preis (`closes.iloc[0]`) – 0 zusätzliche Kosten, siehe ADR-009.
+- **`scan_tracker.py`** (neuer Scheduler-Job, Mo–Fr 18:00 America/New_York, 15 Min nach `es_tracker`): Pendant zu `forward_tracker.py`, füllt `scan_forward_returns`. Nutzt `yf_helper.fetch_closes()` (ADR-010).
+- **`weekly_analysis.py`:** Regelbasierte Gruppenanalyse (0 Kosten) – fester Schwellenwert (`weekly_analysis.sentiment_pos/neg_threshold_pct` Default ±10, `early_signals_pos/neg_threshold_pct` Default ±15 in `config.json`) statt Quartile, da über Wochen stabiler interpretierbar; Fallback auf oberstes/unterstes Quartil bei Gruppengröße <5. Mindeststichprobe `MIN_SAMPLE=15` gereifte Datenpunkte (Horizont 20 Handelstage) je System, sonst `insufficient_data` + ETA-Schätzung aus der Reifegeschwindigkeit der letzten 4 Wochen. Neuer Scheduler-Job `weekly_analysis` (Mo 06:50 America/New_York) verschickt eine Telegram-Zusammenfassung beider Systeme.
+- **Realistische Timeline:** Erste aussagekräftige Ergebnisse erst **~5–6 Wochen nach Deploy** (20 Handelstage Reifezeit + Mindeststichprobe) – vorher zeigt der Analyse-Tab/Telegram-Bericht „noch nicht genug Daten".
+- **Optionaler KI-Button (`generate_ai_text()`):** Löst reale Claude-Haiku-Kosten pro Klick aus, nutzt bestehendes `costs.py`-Tages-Hard-Kill (`DAILY_HARD_KILL_USD`, gemeinsam mit dem bestehenden `ki_enabled`-Pfad des Hauptscans). Kein neuer Datendurchlauf – nur der bereits berechnete `weekly_reports.report_json` wird als Kontext an Claude übergeben. Fehlerpfade: kein `CLAUDE_API_KEY` oder `insufficient_data` → `ValueError` (400), Tageslimit erreicht → `RuntimeError` (429).
+- **Endpoints:** `GET /api/analysis/latest?system=sentiment|early_signals`, `POST /api/analysis/run` (regelbasiert, sofort, kostenlos), `POST /api/analysis/run-ai` (Claude, kostenpflichtig, Frontend zeigt vorher einen `confirm()`-Kostenhinweis).
+- **PWA:** 5. Tab „Analyse" (nach „Früh") mit System-Umschalter (Chip-Toggle, wiederverwendet `.es-filter-chip`), Kennzahlen-Vergleich Positiv-/Negativ-Gruppe, zwei Buttons.
+- **Pitfall `get_latest_report()`:** Sortierung muss nach `id DESC`, nicht nach `report_ts DESC` – `report_ts` hat nur Sekundenpräzision, zwei Analysen derselben Sekunde (z.B. manueller Re-Run kurz nach dem automatischen Job) wären sonst mehrdeutig geordnet (live im Test gefunden und gefixt).
+- **POST-Body-Konvention:** Wie bei allen bestehenden POST-Endpoints `request.get_json(force=True, silent=True)` verwenden – das Frontend setzt nirgends explizit `Content-Type: application/json`, `force=True` umgeht den sonst nötigen Mimetype-Check.
 
 ## tickers.csv erneuern (quartalsweise)
 
