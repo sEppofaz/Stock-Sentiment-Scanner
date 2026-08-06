@@ -646,8 +646,8 @@ def api_early_signals():
 @app.route("/sentiment/api/analysis/latest")
 def api_analysis_latest():
     system = request.args.get("system", "")
-    if system not in ("sentiment", "early_signals"):
-        return jsonify({"error": "system muss 'sentiment' oder 'early_signals' sein"}), 400
+    if system not in ("sentiment", "early_signals", "cross_signal"):
+        return jsonify({"error": "system muss 'sentiment', 'early_signals' oder 'cross_signal' sein"}), 400
     from weekly_analysis import get_latest_report
     report = get_latest_report(system)
     if report is None:
@@ -659,8 +659,8 @@ def api_analysis_latest():
 def api_analysis_run():
     body = request.get_json(force=True, silent=True) or {}
     system = body.get("system", "")
-    if system not in ("sentiment", "early_signals"):
-        return jsonify({"error": "system muss 'sentiment' oder 'early_signals' sein"}), 400
+    if system not in ("sentiment", "early_signals", "cross_signal"):
+        return jsonify({"error": "system muss 'sentiment', 'early_signals' oder 'cross_signal' sein"}), 400
     try:
         from weekly_analysis import analyze_and_store
         report = analyze_and_store(_load_cfg(), system)
@@ -674,8 +674,8 @@ def api_analysis_run():
 def api_analysis_run_ai():
     body = request.get_json(force=True, silent=True) or {}
     system = body.get("system", "")
-    if system not in ("sentiment", "early_signals"):
-        return jsonify({"error": "system muss 'sentiment' oder 'early_signals' sein"}), 400
+    if system not in ("sentiment", "early_signals", "cross_signal"):
+        return jsonify({"error": "system muss 'sentiment', 'early_signals' oder 'cross_signal' sein"}), 400
     from weekly_analysis import get_latest_report, generate_ai_text
     report_row = get_latest_report(system)
     if report_row is None:

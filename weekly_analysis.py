@@ -118,6 +118,10 @@ _SENTIMENT_LEVERS = {
     "buzz": ("higher_is_better", [], "Buzz (Artikel-Volumen)", "30% (normiert) in _calc_score()"),
     "sentiment_norm": ("higher_is_better", [], "NLP-Sentiment-Score", "25% in _calc_score()"),
     "pe": ("lower_is_better", [], "KGV", "Bonus nur bei 0<pe<30 (hartcodiert in _calc_score())"),
+    "claude_confidence": ("higher_is_better", [], "Claude-Konfidenz",
+                          "kein Score-Gewicht, aber Kandidat für einen neuen Mindest-Konfidenz-Filter"),
+    "avg_volume_10d": ("higher_is_better", [], "Ø 10-Tage-Handelsvolumen",
+                       "kein Score-Gewicht, explorativ – Richtung nicht vorab angenommen, nur beobachtet"),
 }
 
 _EARLY_LEVERS = {
@@ -216,9 +220,9 @@ def _suggest_adjustments(cfg: dict, system: str, report: dict) -> list[dict]:
             entry["kind"] = "observation_confirms"
             entry["text"] = (
                 f"{label}: Positiv-Gruppe Ø {pos_mean} vs. Negativ-Gruppe Ø {neg_mean} "
-                f"({cmp_word} Wert = bessere Performance, bestätigt bisherige Annahme). "
-                f"Kein config.json-Schwellenwert vorhanden – Kandidat für eine Gewichts-Anpassung im Code "
-                f"({weight_hint or 'siehe Score-Formel'})."
+                f"({cmp_word} Wert = bessere Performance). Kein config.json-Schwellenwert vorhanden – "
+                + (f"Kandidat für eine Gewichts-Anpassung im Code ({weight_hint})."
+                   if weight_hint else "aktuell nur Beobachtung, kein direkter Hebel.")
             )
         else:
             entry["kind"] = "unexpected_inverse"
@@ -239,7 +243,9 @@ def _suggest_adjustments(cfg: dict, system: str, report: dict) -> list[dict]:
 # ── Sentiment-Scan-Analyse ─────────────────────────────────────────────────────
 
 _SENTIMENT_VALUE_COLS = ["score", "bullish_pct", "bearish_pct", "buzz",
-                         "articles_week", "sentiment_norm", "pe"]
+                         "articles_week", "sentiment_norm", "pe",
+                         "claude_confidence", "avg_volume_10d", "avg_volume_3m",
+                         "beta", "float_shares"]
 
 
 def _analyze_sentiment(cfg: dict) -> dict:
@@ -247,7 +253,8 @@ def _analyze_sentiment(cfg: dict) -> dict:
         rows = [dict(r) for r in conn.execute(
             "SELECT s.ticker, s.snapshot_ts, s.score, s.bullish_pct, s.bearish_pct, "
             "       s.buzz, s.articles_week, s.sentiment_norm, s.market_cap, s.pe, "
-            "       s.pinned, sfr.ret_pct "
+            "       s.pinned, s.claude_confidence, s.avg_volume_10d, s.avg_volume_3m, "
+            "       s.beta, s.float_shares, s.sector, sfr.ret_pct "
             "FROM scan_snapshots s JOIN scan_forward_returns sfr ON sfr.snapshot_id = s.id "
             "WHERE sfr.horizon_days = ? AND sfr.ret_pct IS NOT NULL",
             (HORIZON,),
@@ -261,12 +268,15 @@ def _analyze_sentiment(cfg: dict) -> dict:
     groups = _split_groups(rows, pos_thr, neg_thr)
 
     def _summarize(group_rows: list[dict], direction: str) -> dict:
+        sectors = Counter(r["sector"] for r in group_rows if r.get("sector"))
+        n_g = len(group_rows)
         return {
-            "n": len(group_rows),
+            "n": n_g,
             "avg_ret_pct": _mean([r["ret_pct"] for r in group_rows]),
             "stats": _group_stats(group_rows, _SENTIMENT_VALUE_COLS),
-            "pinned_pct": round(sum(1 for r in group_rows if r["pinned"]) / len(group_rows) * 100, 1)
-                          if group_rows else None,
+            "pinned_pct": round(sum(1 for r in group_rows if r["pinned"]) / n_g * 100, 1)
+                          if n_g else None,
+            "sector_distribution_pct": {s: round(c / n_g * 100, 1) for s, c in sectors.items()} if n_g else {},
             "examples": _top_examples(group_rows, "ret_pct", 5, reverse=(direction == "pos")),
         }
 
@@ -382,6 +392,59 @@ def _analyze_early_signals(cfg: dict) -> dict:
     }
 
 
+# ── Cross-System-Analyse (Ticker in beiden Systemen gleichzeitig) ─────────────
+# Prüft, ob ein Sentiment-Scan-Snapshot, dessen Ticker auch innerhalb von ±7
+# Tagen einen Frühsignal-Alert hatte, im Schnitt besser/schlechter performt als
+# einer ohne diese Überschneidung – rein SQL, 0 Kosten. Josef-Wunsch 2026-08-06.
+
+_CROSS_OVERLAP_DAYS = 7
+_CROSS_MIN_OVERLAP = 3  # eigene Mindestgröße für die Overlap-Gruppe (kann bei
+                        # insgesamt genug Daten trotzdem selten sein)
+
+
+def _analyze_cross_signal(cfg: dict) -> dict:
+    with get_conn() as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT s.ticker, s.snapshot_ts, sfr.ret_pct, "
+            "  EXISTS(SELECT 1 FROM alerts a WHERE a.ticker = s.ticker "
+            "         AND ABS(julianday(a.alert_ts) - julianday(s.snapshot_ts)) <= ?) AS has_overlap "
+            "FROM scan_snapshots s JOIN scan_forward_returns sfr ON sfr.snapshot_id = s.id "
+            "WHERE sfr.horizon_days = ? AND sfr.ret_pct IS NOT NULL",
+            (_CROSS_OVERLAP_DAYS, HORIZON),
+        ).fetchall()]
+
+    n = len(rows)
+    overlap = [r for r in rows if r["has_overlap"]]
+    no_overlap = [r for r in rows if not r["has_overlap"]]
+
+    if n < MIN_SAMPLE or len(overlap) < _CROSS_MIN_OVERLAP:
+        # ETA aus derselben Reifungs-Rate wie das Sentiment-System (gleiche
+        # zugrundeliegende Tabelle scan_forward_returns)
+        return {
+            "system": "cross_signal", "sample_size": n, "insufficient_data": True,
+            "min_sample": MIN_SAMPLE, "overlap_count": len(overlap),
+            "min_overlap": _CROSS_MIN_OVERLAP, "eta_weeks": _eta_weeks("sentiment", n),
+        }
+
+    def _summarize(group_rows: list[dict]) -> dict:
+        return {
+            "n": len(group_rows),
+            "avg_ret_pct": _mean([r["ret_pct"] for r in group_rows]),
+            "examples": _top_examples(group_rows, "ret_pct", 5, reverse=True),
+        }
+
+    return {
+        "system": "cross_signal",
+        "sample_size": n,
+        "insufficient_data": False,
+        "overlap_days": _CROSS_OVERLAP_DAYS,
+        "period_start": min(r["snapshot_ts"] for r in rows)[:10],
+        "period_end": max(r["snapshot_ts"] for r in rows)[:10],
+        "overlap_group": _summarize(overlap),
+        "no_overlap_group": _summarize(no_overlap),
+    }
+
+
 # ── Speichern + Einstiegspunkte ────────────────────────────────────────────────
 
 def analyze_and_store(cfg: dict, system: str) -> dict:
@@ -389,10 +452,14 @@ def analyze_and_store(cfg: dict, system: str) -> dict:
         report = _analyze_sentiment(cfg)
     elif system == "early_signals":
         report = _analyze_early_signals(cfg)
+    elif system == "cross_signal":
+        report = _analyze_cross_signal(cfg)
     else:
         raise ValueError(f"Unbekanntes System: {system!r}")
 
-    if not report.get("insufficient_data"):
+    # _suggest_adjustments erwartet pos_group/neg_group – gibt es nur bei
+    # sentiment/early_signals, cross_signal hat overlap_group/no_overlap_group
+    if not report.get("insufficient_data") and system in ("sentiment", "early_signals"):
         report["suggestions"] = _suggest_adjustments(cfg, system, report)
 
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -432,19 +499,20 @@ def get_latest_report(system: str) -> dict | None:
 
 
 def run_weekly_analysis(cfg: dict) -> None:
-    """Scheduler-Einstiegspunkt: analysiert beide Systeme, verschickt eine
-    Telegram-Nachricht mit beiden Abschnitten. 0 Kosten (kein Claude-Call)."""
+    """Scheduler-Einstiegspunkt: analysiert alle drei Dimensionen, verschickt
+    eine Telegram-Nachricht mit allen Abschnitten. 0 Kosten (kein Claude-Call)."""
     from scanner import _tg_post
 
     reports = {}
-    for system in ("sentiment", "early_signals"):
+    for system in ("sentiment", "early_signals", "cross_signal"):
         try:
             reports[system] = analyze_and_store(cfg, system)
         except Exception:
             log.exception("Wöchentliche Analyse fehlgeschlagen (%s)", system)
 
     lines = ["📈 <b>Wöchentliche Performance-Analyse</b>", ""]
-    for system, label in (("sentiment", "Sentiment-Scan"), ("early_signals", "Frühsignale")):
+    for system, label in (("sentiment", "Sentiment-Scan"), ("early_signals", "Frühsignale"),
+                          ("cross_signal", "Cross-Signal (beide Systeme)")):
         r = reports.get(system)
         lines.append(f"<b>{label}</b>")
         if not r:
@@ -452,7 +520,17 @@ def run_weekly_analysis(cfg: dict) -> None:
         elif r.get("insufficient_data"):
             eta = r.get("eta_weeks")
             eta_txt = f", noch ~{eta} Wochen" if eta else ""
-            lines.append(f"Noch nicht genug Daten ({r['sample_size']}/{MIN_SAMPLE}{eta_txt}).")
+            if system == "cross_signal":
+                lines.append(f"Noch nicht genug Überschneidungen ({r.get('overlap_count', 0)}/"
+                             f"{r.get('min_overlap', _CROSS_MIN_OVERLAP)}{eta_txt}).")
+            else:
+                lines.append(f"Noch nicht genug Daten ({r['sample_size']}/{MIN_SAMPLE}{eta_txt}).")
+        elif system == "cross_signal":
+            ov, no_ov = r["overlap_group"], r["no_overlap_group"]
+            lines.append(
+                f"Überschneidung (n={ov['n']}, Ø {ov['avg_ret_pct']:+.1f}%) vs. "
+                f"kein Überlapp (n={no_ov['n']}, Ø {no_ov['avg_ret_pct']:+.1f}%)"
+            )
         else:
             pos, neg = r["pos_group"], r["neg_group"]
             lines.append(
@@ -495,21 +573,34 @@ def generate_ai_text(report_row: dict, system: str) -> dict:
     if report.get("insufficient_data"):
         raise ValueError("Noch nicht genug Daten für eine KI-Interpretation")
 
-    label = "Sentiment-Scan" if system == "sentiment" else "Frühsignale"
+    label = {"sentiment": "Sentiment-Scan", "early_signals": "Frühsignale",
+             "cross_signal": "Cross-Signal (Überschneidung Sentiment-Scan/Frühsignale)"}[system]
+
+    if system == "cross_signal":
+        task_txt = (
+            "Schreibe eine kurze, konkrete deutsche Zusammenfassung (max. 120 Wörter): "
+            "Performt die Überschneidungs-Gruppe (overlap_group) klar anders als die "
+            "Gruppe ohne Überlapp (no_overlap_group)? Wie belastbar ist das angesichts "
+            "der Stichprobengröße? Nenne keine Anlageempfehlung, nur die beobachteten "
+            "Muster in den Daten und deren Belastbarkeit."
+        )
+    else:
+        task_txt = (
+            "Im Feld 'suggestions' stehen bereits regelbasiert berechnete Auffälligkeiten "
+            "(inkl. 'unexpected_inverse' = Fälle, in denen die bisherige Annahme 'höherer "
+            "Wert = stärkeres Signal' den Daten widerspricht). Schreibe eine kurze, "
+            "konkrete deutsche Zusammenfassung (max. 150 Wörter): Ordne diese Vorschläge "
+            "fachlich ein – welche sind angesichts der Stichprobengröße plausibel, welche "
+            "eher Zufall? Was unterscheidet die positive von der negativen Gruppe am "
+            "deutlichsten? Nenne keine Anlageempfehlung, nur die beobachteten Muster in "
+            "den Daten und deren Belastbarkeit."
+        )
+
     prompt = (
         f"Hier ist eine regelbasierte statistische Auswertung ({label}) aus einem "
-        f"Aktien-Signal-System: Vergleich der Score-/Signal-Komponenten zwischen "
-        f"positiv und negativ performenden Empfehlungen (Kursrendite {HORIZON} "
-        f"Handelstage später).\n\n"
+        f"Aktien-Signal-System (Kursrendite {HORIZON} Handelstage später).\n\n"
         f"{json.dumps(report, ensure_ascii=False, indent=2)}\n\n"
-        "Im Feld 'suggestions' stehen bereits regelbasiert berechnete Auffälligkeiten "
-        "(inkl. 'unexpected_inverse' = Fälle, in denen die bisherige Annahme 'höherer "
-        "Wert = stärkeres Signal' den Daten widerspricht). Schreibe eine kurze, "
-        "konkrete deutsche Zusammenfassung (max. 150 Wörter): Ordne diese Vorschläge "
-        "fachlich ein – welche sind angesichts der Stichprobengröße plausibel, welche "
-        "eher Zufall? Was unterscheidet die positive von der negativen Gruppe am "
-        "deutlichsten? Nenne keine Anlageempfehlung, nur die beobachteten Muster in "
-        "den Daten und deren Belastbarkeit."
+        f"{task_txt}"
     )
 
     client = anthropic.Anthropic(api_key=os.environ.get("CLAUDE_API_KEY", ""))

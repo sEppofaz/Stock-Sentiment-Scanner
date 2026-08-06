@@ -486,6 +486,13 @@ def _run_scan_inner(cfg: dict) -> dict:
                     c["market_cap"] = None
 
                 c["pe"] = pe
+                # Zusätzliche Felder aus derselben (ohnehin schon bezahlten) /stock/metric-
+                # Antwort für die wöchentliche Performance-Analyse – 0 zusätzliche API-Calls
+                c["avg_volume_10d"] = metrics.get("10DayAverageTradingVolume")
+                c["avg_volume_3m"] = metrics.get("3MonthAverageTradingVolume")
+                c["week52_high"] = metrics.get("52WeekHigh")
+                c["week52_low"] = metrics.get("52WeekLow")
+                c["beta"] = metrics.get("beta")
                 valid.append(c)
             except Exception as e:
                 mc_errors += 1
@@ -522,6 +529,11 @@ def _run_scan_inner(cfg: dict) -> dict:
                         mc_m = metrics.get("marketCapitalization")
                         base["market_cap"] = int(mc_m * 1_000_000) if mc_m else None
                         base["pe"] = metrics.get("peNormalizedAnnual")
+                        base["avg_volume_10d"] = metrics.get("10DayAverageTradingVolume")
+                        base["avg_volume_3m"] = metrics.get("3MonthAverageTradingVolume")
+                        base["week52_high"] = metrics.get("52WeekHigh")
+                        base["week52_low"] = metrics.get("52WeekLow")
+                        base["beta"] = metrics.get("beta")
                     except Exception:
                         base["market_cap"] = None
                         base["pe"] = None
@@ -533,6 +545,21 @@ def _run_scan_inner(cfg: dict) -> dict:
                     base.pop("_news_texts", None)
                     base.pop("_day_counts", None)
                     top_n.append(base)
+
+        # Sektor/Streubesitz nur für die finalen Top-N (nicht alle Kandidaten) –
+        # neuer Call-Typ (/stock/profile2), bewusst erst hier statt in Stufe 2,
+        # um die Zusatzlast auf ~top_n_results statt ~50-150 Kandidaten zu begrenzen
+        SCAN_STATUS["phase"] = "sektor"
+        for r in top_n:
+            SCAN_STATUS["current_ticker"] = r["ticker"]
+            try:
+                p = _fh_get("/stock/profile2", {"symbol": r["ticker"]})
+                r["sector"] = p.get("finnhubIndustry")
+                r["float_shares"] = p.get("floatingShare")
+            except Exception as e:
+                log.debug("%s profile2: %s", r["ticker"], e)
+                r["sector"] = None
+                r["float_shares"] = None
 
     output = {
         "scanned_at": datetime.utcnow().isoformat() + "Z",

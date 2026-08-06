@@ -617,6 +617,7 @@ tr:last-child td{border-bottom:none}
     <div class="es-filter-row" id="an-toggle">
       <button class="es-filter-chip active" onclick="switchAnalysisSystem('sentiment')" id="an-sys-sentiment">Sentiment-Scan</button>
       <button class="es-filter-chip" onclick="switchAnalysisSystem('early_signals')" id="an-sys-early">Frühsignale</button>
+      <button class="es-filter-chip" onclick="switchAnalysisSystem('cross_signal')" id="an-sys-cross">Cross-Signal</button>
     </div>
 
     <div id="an-content"></div>
@@ -850,7 +851,7 @@ async function pollScanStatus() {
       btn.disabled = true;
       if (btnPf) btnPf.disabled = true;
 
-      const isLate = s.phase === 'stufe2' || s.phase === 'claude';
+      const isLate = s.phase === 'stufe2' || s.phase === 'claude' || s.phase === 'sektor';
       let pct = s.total > 0 ? Math.round(s.progress / s.total * 100) : 0;
       if (isLate) pct = 99;
 
@@ -864,6 +865,8 @@ async function pollScanStatus() {
         phaseLabel = 'Vollscan · KI-Analyse';
       } else if (s.phase === 'stufe2') {
         phaseLabel = 'Vollscan · Fundamentaldaten';
+      } else if (s.phase === 'sektor') {
+        phaseLabel = 'Vollscan · Sektor-Daten';
       } else {
         phaseLabel = 'Vollständiger Scan';
         // Zeitschätzung während Stufe 1
@@ -1532,6 +1535,7 @@ function switchAnalysisSystem(sys) {
   _anSystem = sys;
   document.getElementById('an-sys-sentiment').classList.toggle('active', sys === 'sentiment');
   document.getElementById('an-sys-early').classList.toggle('active', sys === 'early_signals');
+  document.getElementById('an-sys-cross').classList.toggle('active', sys === 'cross_signal');
   document.getElementById('an-ai-text').innerHTML = '';
   loadAnalysis();
 }
@@ -1554,7 +1558,7 @@ function anGroupCard(title, g, system) {
     return `<div class="es-alert-card"><div class="es-stat-h">${esc(title)}</div><div class="es-empty" style="padding:12px">Keine Daten</div></div>`;
   }
   const retCls = g.avg_ret_pct >= 0 ? 'pos' : 'neg';
-  let rows;
+  let rows, sectorHtml = '';
   if (system === 'sentiment') {
     rows = anRow('Bullish %', anFmtStat(g.stats.bullish_pct))
       + anRow('Bearish %', anFmtStat(g.stats.bearish_pct))
@@ -1562,7 +1566,16 @@ function anGroupCard(title, g, system) {
       + anRow('NLP-Score', anFmtStat(g.stats.sentiment_norm))
       + anRow('KGV', anFmtStat(g.stats.pe))
       + anRow('Score', anFmtStat(g.stats.score))
+      + anRow('Claude-Konfidenz', anFmtStat(g.stats.claude_confidence))
+      + anRow('Ø Volumen (10T)', anFmtStat(g.stats.avg_volume_10d))
+      + anRow('Beta', anFmtStat(g.stats.beta))
+      + anRow('Streubesitz (Mio.)', anFmtStat(g.stats.float_shares))
       + anRow('Portfolio-Pin', g.pinned_pct != null ? `${g.pinned_pct}%` : '–');
+    const sectors = Object.entries(g.sector_distribution_pct || {}).sort((a, b) => b[1] - a[1]);
+    if (sectors.length) {
+      sectorHtml = `<div class="an-examples">${sectors.map(([s, p]) =>
+        `<span class="chip">${esc(s)} ${p}%</span>`).join('')}</div>`;
+    }
   } else {
     rows = anRow('Ø Signal-Score', g.avg_total_score != null ? g.avg_total_score : '–')
       + anRow('Insider-Cluster', g.insider_cluster_pct != null ? `${g.insider_cluster_pct}%` : '–')
@@ -1578,6 +1591,22 @@ function anGroupCard(title, g, system) {
     <div class="es-stat-h">${esc(title)} (n=${g.n})</div>
     <div class="es-stat-ret ${retCls}" style="font-size:1.05rem;margin-bottom:8px">Ø ${anFmtPct(g.avg_ret_pct)}</div>
     ${rows}
+    ${sectorHtml}
+    ${examples ? `<div class="an-examples">${examples}</div>` : ''}
+  </div>`;
+}
+
+function anCrossCard(title, g) {
+  if (!g || !g.n) {
+    return `<div class="es-alert-card"><div class="es-stat-h">${esc(title)}</div><div class="es-empty" style="padding:12px">Keine Daten</div></div>`;
+  }
+  const retCls = g.avg_ret_pct >= 0 ? 'pos' : 'neg';
+  const examples = (g.examples || []).map(e =>
+    `<span class="chip${e.ret_pct >= 0 ? ' green' : ' red'}">${esc(e.ticker)} ${anFmtPct(e.ret_pct)}</span>`
+  ).join('');
+  return `<div class="es-alert-card">
+    <div class="es-stat-h">${esc(title)} (n=${g.n})</div>
+    <div class="es-stat-ret ${retCls}" style="font-size:1.05rem;margin-bottom:8px">Ø ${anFmtPct(g.avg_ret_pct)}</div>
     ${examples ? `<div class="an-examples">${examples}</div>` : ''}
   </div>`;
 }
@@ -1617,7 +1646,26 @@ async function loadAnalysis() {
     if (rep.insufficient_data) {
       const eta = rep.eta_weeks;
       const etaTxt = eta != null ? ` – voraussichtlich noch ~${eta} Woche${eta === 1 ? '' : 'n'}.` : '';
-      content.innerHTML = `<div class="es-note">Noch nicht genug Daten für eine belastbare Analyse: ${rep.sample_size}/${rep.min_sample} gereifte Datenpunkte.${etaTxt}</div>`;
+      const note = _anSystem === 'cross_signal'
+        ? `Noch nicht genug Überschneidungen zwischen den Systemen: ${rep.overlap_count || 0}/${rep.min_overlap} gefunden.${etaTxt}`
+        : `Noch nicht genug Daten für eine belastbare Analyse: ${rep.sample_size}/${rep.min_sample} gereifte Datenpunkte.${etaTxt}`;
+      content.innerHTML = `<div class="es-note">${note}</div>`;
+      return;
+    }
+
+    if (_anSystem === 'cross_signal') {
+      content.innerHTML = `
+        <div style="font-size:.75rem;color:var(--muted);margin-bottom:10px">
+          Zeitraum ${rep.period_start} – ${rep.period_end} · n=${rep.sample_size} · Überlapp-Fenster ±${rep.overlap_days} Tage
+        </div>
+        <div class="an-groups">
+          ${anCrossCard('Überschneidung (beide Systeme)', rep.overlap_group)}
+          ${anCrossCard('Kein Überlapp', rep.no_overlap_group)}
+        </div>`;
+      if (d.ai_text) {
+        document.getElementById('an-ai-text').innerHTML =
+          `<div class="an-ai-text"><b>✨ KI-Interpretation</b> (${esDate(d.ai_generated_ts)})<br><br>${esc(d.ai_text)}</div>`;
+      }
       return;
     }
 

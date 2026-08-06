@@ -64,6 +64,14 @@ CREATE TABLE IF NOT EXISTS scan_snapshots (
     pe                REAL,
     pinned            INTEGER NOT NULL DEFAULT 0,
     price_at_snapshot REAL,            -- NULL bis scan_tracker.py sie nachträgt (yfinance Tages-Close)
+    claude_confidence REAL,            -- nur gesetzt wenn ki_enabled zum Scan-Zeitpunkt aktiv war
+    avg_volume_10d    REAL,            -- Finnhub 10DayAverageTradingVolume (Mio. Aktien)
+    avg_volume_3m     REAL,            -- Finnhub 3MonthAverageTradingVolume (Mio. Aktien)
+    week52_high       REAL,
+    week52_low        REAL,
+    beta              REAL,
+    sector            TEXT,            -- Finnhub finnhubIndustry (/stock/profile2)
+    float_shares      REAL,            -- Finnhub floatingShare (Mio. Aktien, /stock/profile2)
     UNIQUE(ticker, snapshot_ts)
 );
 CREATE INDEX IF NOT EXISTS idx_scan_snapshots_ticker_ts ON scan_snapshots(ticker, snapshot_ts);
@@ -125,6 +133,17 @@ def init_db():
         if "kind" not in cols:
             conn.execute("ALTER TABLE alerts ADD COLUMN kind TEXT NOT NULL DEFAULT 'instant'")
 
+        # Migration: scan_snapshots vor 2026-08-06 (erster Rollout dieser Session)
+        # hatte noch keine erweiterten Felder (confidence/Volumen/52W/Beta/Sektor/Float)
+        snap_cols = [r["name"] for r in conn.execute("PRAGMA table_info(scan_snapshots)").fetchall()]
+        for col, coltype in (
+            ("claude_confidence", "REAL"), ("avg_volume_10d", "REAL"), ("avg_volume_3m", "REAL"),
+            ("week52_high", "REAL"), ("week52_low", "REAL"), ("beta", "REAL"),
+            ("sector", "TEXT"), ("float_shares", "REAL"),
+        ):
+            if col not in snap_cols:
+                conn.execute(f"ALTER TABLE scan_snapshots ADD COLUMN {col} {coltype}")
+
 
 def cleanup_old_data() -> tuple[int, int]:
     """Prunt operative Historientabellen, die unbegrenzt wachsen (M8).
@@ -172,13 +191,18 @@ def insert_scan_snapshots(snapshot_ts: str, top_n: list[dict]) -> None:
             cur = conn.execute(
                 "INSERT OR IGNORE INTO scan_snapshots "
                 "(ticker, snapshot_ts, rank, score, bullish_pct, bearish_pct, buzz, "
-                " articles_week, sentiment_norm, market_cap, pe, pinned) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " articles_week, sentiment_norm, market_cap, pe, pinned, "
+                " claude_confidence, avg_volume_10d, avg_volume_3m, week52_high, "
+                " week52_low, beta, sector, float_shares) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     r["ticker"], snapshot_ts, rank, r.get("score"),
                     r.get("bullish_pct"), r.get("bearish_pct"), r.get("buzz"),
                     r.get("articles_week"), r.get("sentiment_norm"),
                     r.get("market_cap"), r.get("pe"), 1 if r.get("pinned") else 0,
+                    r.get("claude_confidence"), r.get("avg_volume_10d"), r.get("avg_volume_3m"),
+                    r.get("week52_high"), r.get("week52_low"), r.get("beta"),
+                    r.get("sector"), r.get("float_shares"),
                 ),
             )
             if cur.rowcount == 0:
