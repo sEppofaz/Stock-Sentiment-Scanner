@@ -593,9 +593,25 @@ def run_portfolio_scan() -> None:
         })
 
 
+def _apply_price(entry: dict, price: float | None) -> None:
+    """Schreibt Kurs/Positionswert/P&L in den Eintrag; markiert bei Fehlschlag
+    als price_stale statt den alten Kurs stillschweigend stehen zu lassen
+    (sonst nicht von einem tatsächlich unbewegten Kurs zu unterscheiden)."""
+    if price:
+        entry["current_price"] = price
+        entry["current_value"] = round(price * entry.get("shares", 0), 2)
+        cost = entry.get("buy_price", 0) * entry.get("shares", 0)
+        entry["pnl"] = round(entry["current_value"] - cost, 2)
+        entry["pnl_pct"] = round((entry["pnl"] / cost * 100) if cost else 0, 2)
+        entry["price_stale"] = False
+        entry["price_updated_at"] = datetime.utcnow().isoformat() + "Z"
+    else:
+        entry["price_stale"] = True
+
+
 def _run_portfolio_scan_inner(portfolio: list[dict]) -> None:
     log.info("Portfolio-Scan gestartet: %d Aktien", len(portfolio))
-    changed = False
+    stale_entries = []
 
     for i, entry in enumerate(portfolio):
         if SCAN_STATUS.get("abort"):
@@ -612,22 +628,9 @@ def _run_portfolio_scan_inner(portfolio: list[dict]) -> None:
         # Kurs unabhängig vom Sentiment-Fetch aktualisieren (z.B. bei Finnhub
         # 503 auf /company-news soll die parallel erfolgreiche Kursabfrage
         # trotzdem gespeichert werden, statt durch das folgende continue verworfen)
-        if price:
-            entry["current_price"] = price
-            entry["current_value"] = round(price * entry.get("shares", 0), 2)
-            cost = entry.get("buy_price", 0) * entry.get("shares", 0)
-            entry["pnl"] = round(entry["current_value"] - cost, 2)
-            entry["pnl_pct"] = round((entry["pnl"] / cost * 100) if cost else 0, 2)
-            entry["price_stale"] = False
-            entry["price_updated_at"] = datetime.utcnow().isoformat() + "Z"
-            changed = True
-        else:
-            # Quote-Abfrage fehlgeschlagen (z.B. Finnhub 503/Timeout) – alter
-            # Kurs bleibt stehen, aber als veraltet markiert statt stillschweigend
-            # unverändert zu wirken (sonst Verwechslungsgefahr mit "Kurs bewegt
-            # sich nicht", Josef-Feedback 2026-08-06)
-            entry["price_stale"] = True
-            changed = True
+        _apply_price(entry, price)
+        if entry["price_stale"]:
+            stale_entries.append(entry)
 
         if sent is None:
             continue
@@ -640,13 +643,11 @@ def _run_portfolio_scan_inner(portfolio: list[dict]) -> None:
                 entry["sell_reason"] = reason
                 log.info("SELL-SIGNAL %s: %s", ticker, reason)
                 _send_telegram_sell(entry, sent, price, reason)
-                changed = True
         else:
             # Signal zurücksetzen wenn Stimmung wieder gut
             if sent["bullish_pct"] >= 40 and sent["bearish_pct"] <= 30:
                 entry["sell_signal"] = False
                 entry["sell_reason"] = None
-                changed = True
 
         # last_sentiment aktualisieren (_news_texts/_day_counts nie persistieren)
         entry["last_sentiment"] = {
@@ -654,11 +655,23 @@ def _run_portfolio_scan_inner(portfolio: list[dict]) -> None:
             "price": price,
             "scanned_at": datetime.utcnow().isoformat() + "Z",
         }
-        changed = True
 
-    if changed:
-        _save_portfolio(portfolio)
+    # Retry-Pass für Ticker mit fehlgeschlagenem Kurs-Fetch: Finnhub-Fehler
+    # (z.B. 503) sind meist transient – ein zweiter Versuch direkt im
+    # Anschluss erspart das Warten auf den nächsten 15-Min-Zyklus
+    # (Josef-Feedback 2026-08-06). Nur der Kurs wird erneut abgefragt, nicht
+    # das komplette Sentiment (Sell-Signal-Logik bleibt beim Hauptlauf).
+    if stale_entries and not SCAN_STATUS.get("abort"):
+        log.info("Portfolio-Scan Retry: %d Ticker mit fehlgeschlagenem Kurs-Fetch", len(stale_entries))
+        for entry in stale_entries:
+            if SCAN_STATUS.get("abort"):
+                break
+            SCAN_STATUS["current_ticker"] = entry["ticker"] + " (Retry)"
+            _apply_price(entry, _fetch_quote(entry["ticker"]))
+        still_stale = sum(1 for e in stale_entries if e["price_stale"])
+        log.info("Portfolio-Scan Retry fertig: %d/%d weiterhin ohne Kurs", still_stale, len(stale_entries))
 
+    _save_portfolio(portfolio)
     log.info("Portfolio-Scan fertig")
 
 
@@ -666,23 +679,18 @@ def _update_portfolio_quotes(portfolio: list[dict]) -> None:
     """Kurse und P&L nach vollständigem Scan aktualisieren."""
     if not portfolio:
         return
-    changed = False
+    stale_entries = []
     for entry in portfolio:
-        price = _fetch_quote(entry["ticker"])
-        if price:
-            entry["current_price"] = price
-            entry["current_value"] = round(price * entry.get("shares", 0), 2)
-            cost = entry.get("buy_price", 0) * entry.get("shares", 0)
-            entry["pnl"] = round(entry["current_value"] - cost, 2)
-            entry["pnl_pct"] = round((entry["pnl"] / cost * 100) if cost else 0, 2)
-            entry["price_stale"] = False
-            entry["price_updated_at"] = datetime.utcnow().isoformat() + "Z"
-            changed = True
-        else:
-            entry["price_stale"] = True
-            changed = True
-    if changed:
-        _save_portfolio(portfolio)
+        _apply_price(entry, _fetch_quote(entry["ticker"]))
+        if entry["price_stale"]:
+            stale_entries.append(entry)
+
+    if stale_entries:
+        log.info("Portfolio-Quotes Retry: %d Ticker mit fehlgeschlagenem Kurs-Fetch", len(stale_entries))
+        for entry in stale_entries:
+            _apply_price(entry, _fetch_quote(entry["ticker"]))
+
+    _save_portfolio(portfolio)
 
 
 # ── Datei-Helfer ──────────────────────────────────────────────────────────────
