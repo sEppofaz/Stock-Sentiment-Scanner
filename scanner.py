@@ -618,6 +618,15 @@ def _run_portfolio_scan_inner(portfolio: list[dict]) -> None:
             cost = entry.get("buy_price", 0) * entry.get("shares", 0)
             entry["pnl"] = round(entry["current_value"] - cost, 2)
             entry["pnl_pct"] = round((entry["pnl"] / cost * 100) if cost else 0, 2)
+            entry["price_stale"] = False
+            entry["price_updated_at"] = datetime.utcnow().isoformat() + "Z"
+            changed = True
+        else:
+            # Quote-Abfrage fehlgeschlagen (z.B. Finnhub 503/Timeout) – alter
+            # Kurs bleibt stehen, aber als veraltet markiert statt stillschweigend
+            # unverändert zu wirken (sonst Verwechslungsgefahr mit "Kurs bewegt
+            # sich nicht", Josef-Feedback 2026-08-06)
+            entry["price_stale"] = True
             changed = True
 
         if sent is None:
@@ -666,6 +675,11 @@ def _update_portfolio_quotes(portfolio: list[dict]) -> None:
             cost = entry.get("buy_price", 0) * entry.get("shares", 0)
             entry["pnl"] = round(entry["current_value"] - cost, 2)
             entry["pnl_pct"] = round((entry["pnl"] / cost * 100) if cost else 0, 2)
+            entry["price_stale"] = False
+            entry["price_updated_at"] = datetime.utcnow().isoformat() + "Z"
+            changed = True
+        else:
+            entry["price_stale"] = True
             changed = True
     if changed:
         _save_portfolio(portfolio)

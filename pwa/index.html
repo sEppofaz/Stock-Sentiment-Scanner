@@ -151,6 +151,7 @@ tr:last-child td{border-bottom:none}
 .pf-kpi-val{font-size:.95rem;font-weight:700}
 .pf-kpi-val.pos{color:var(--green)}
 .pf-kpi-val.neg{color:var(--red)}
+.stale-badge{color:#f59e0b;font-size:.8rem;cursor:help}
 .pf-sell-banner{background:#450a0a;color:#fecaca;border-radius:8px;padding:8px 10px;font-size:.78rem;margin-bottom:10px}
 .pf-btns{display:flex;gap:8px}
 .btn-reset-signal{flex:1;padding:8px;background:var(--bg3);color:var(--text);border:none;border-radius:9px;font-size:.8rem;cursor:pointer}
@@ -1120,6 +1121,9 @@ async function loadPortfolio() {
     const watchSince = p.buy_date
       ? new Date(p.buy_date).toLocaleDateString('de-AT', {day:'2-digit',month:'2-digit',year:'numeric'})
       : '–';
+    const stale = !!p.price_stale;
+    const staleTitle = 'Kursabfrage beim letzten Scan fehlgeschlagen (z.B. Finnhub-Fehler) – zeigt den letzten bekannten Kurs, nicht zwingend den aktuellen';
+    const staleBadge = stale ? ` <span class="stale-badge" title="${staleTitle}">⚠</span>` : '';
 
     const grid = watch ? `
       <div class="pf-grid">
@@ -1129,7 +1133,7 @@ async function loadPortfolio() {
         </div>
         <div class="pf-kpi">
           <div class="pf-kpi-label">Aktuell</div>
-          <div class="pf-kpi-val">${price ? '$' + price.toFixed(2) : '–'}</div>
+          <div class="pf-kpi-val">${price ? '$' + price.toFixed(2) : '–'}${staleBadge}</div>
         </div>
       </div>
       <div class="pf-grid" style="margin-top:8px">
@@ -1145,7 +1149,7 @@ async function loadPortfolio() {
         </div>
         <div class="pf-kpi">
           <div class="pf-kpi-label">Aktuell</div>
-          <div class="pf-kpi-val">${price ? '$' + price.toFixed(2) : '–'}</div>
+          <div class="pf-kpi-val">${price ? '$' + price.toFixed(2) : '–'}${staleBadge}</div>
         </div>
         <div class="pf-kpi">
           <div class="pf-kpi-label">Positionswert</div>
