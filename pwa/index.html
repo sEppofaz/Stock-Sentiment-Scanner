@@ -221,6 +221,12 @@ tr:last-child td{border-bottom:none}
 .btn-an-ai:active:not(:disabled){opacity:.8}
 .btn-an-run:disabled,.btn-an-ai:disabled{opacity:.5;cursor:not-allowed}
 .an-ai-text{background:var(--bg2);border-radius:12px;padding:14px;margin-top:14px;font-size:.85rem;line-height:1.5;white-space:pre-wrap}
+.an-sugg-card{background:var(--bg2);border-radius:12px;padding:12px 14px;margin-bottom:8px;border-left:3px solid var(--border)}
+.an-sugg-card.an-sugg-raise_threshold{border-left-color:var(--accent)}
+.an-sugg-card.an-sugg-unexpected_inverse{border-left-color:var(--yellow)}
+.an-sugg-hd{font-size:.78rem;font-weight:700;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.an-sugg-conf{font-size:.68rem;font-weight:400;color:var(--muted);white-space:nowrap}
+.an-sugg-text{font-size:.8rem;color:var(--muted);line-height:1.4}
 .es-alert-card{background:var(--bg2);border-radius:14px;padding:14px;margin-bottom:10px}
 .es-alert-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
 .es-alert-ticker{font-size:1rem;font-weight:700}
@@ -1576,6 +1582,25 @@ function anGroupCard(title, g, system) {
   </div>`;
 }
 
+const AN_KIND_LABEL = {
+  raise_threshold: '💡 Schwellenwert-Vorschlag',
+  observation_confirms: '📎 Beobachtung',
+  unexpected_inverse: '⚠️ Widerspricht bisheriger Annahme',
+};
+const AN_CONF_LABEL = { hoch: 'hohe Konfidenz', mittel: 'mittlere Konfidenz', niedrig: 'niedrige Konfidenz (kleine Stichprobe)' };
+
+function anSuggestions(suggestions) {
+  if (!suggestions || !suggestions.length) {
+    return '<div class="es-note">Keine auffälligen Unterschiede zwischen den Gruppen gefunden (oder Differenz &lt;20%).</div>';
+  }
+  const cards = suggestions.map(s => `
+    <div class="an-sugg-card an-sugg-${s.kind}">
+      <div class="an-sugg-hd">${esc(AN_KIND_LABEL[s.kind] || s.kind)} <span class="an-sugg-conf">${esc(AN_CONF_LABEL[s.confidence] || s.confidence)}</span></div>
+      <div class="an-sugg-text">${esc(s.text)}</div>
+    </div>`).join('');
+  return `<div class="section-title" style="margin-top:16px">Anpassungsvorschläge (regelbasiert)</div>${cards}`;
+}
+
 async function loadAnalysis() {
   const content = document.getElementById('an-content');
   content.innerHTML = '<div class="es-empty">Lädt…</div>';
@@ -1607,7 +1632,8 @@ async function loadAnalysis() {
       <div class="an-groups">
         ${anGroupCard('Positiv', rep.pos_group, _anSystem)}
         ${anGroupCard('Negativ', rep.neg_group, _anSystem)}
-      </div>`;
+      </div>
+      ${anSuggestions(rep.suggestions)}`;
 
     if (d.ai_text) {
       document.getElementById('an-ai-text').innerHTML =

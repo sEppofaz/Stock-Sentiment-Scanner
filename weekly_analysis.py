@@ -107,6 +107,135 @@ def _insufficient_report(system: str, n: int) -> dict:
     }
 
 
+# ── Konkrete Anpassungsvorschläge (regelbasiert, 0 Kosten) ────────────────────
+# Für jede Metrik: (Richtung laut aktueller Scoring-/Filter-Logik, betroffene
+# config.json-Schwellenwerte falls vorhanden, Anzeigelabel, Score-Formel-Gewicht
+# falls die Metrik direkt in _calc_score() einfließt statt über einen
+# config.json-Schwellenwert gesteuert zu werden).
+_SENTIMENT_LEVERS = {
+    "bullish_pct": ("higher_is_better", ["filter.bullish_pct_min"], "Bullish-Anteil", "45% in _calc_score()"),
+    "bearish_pct": ("lower_is_better", ["filter.bearish_pct_max"], "Bearish-Anteil", None),
+    "buzz": ("higher_is_better", [], "Buzz (Artikel-Volumen)", "30% (normiert) in _calc_score()"),
+    "sentiment_norm": ("higher_is_better", [], "NLP-Sentiment-Score", "25% in _calc_score()"),
+    "pe": ("lower_is_better", [], "KGV", "Bonus nur bei 0<pe<30 (hartcodiert in _calc_score())"),
+}
+
+_EARLY_LEVERS = {
+    "volume_z_score": ("higher_is_better",
+                        ["early_signals.volume_z_min", "early_signals.single_volume_z_min"],
+                        "Volumen-z-Score", None),
+    "buzz_rel_accel": ("higher_is_better",
+                        ["early_signals.buzz_rel_accel_min", "early_signals.single_buzz_accel_min"],
+                        "Buzz-Beschleunigung", None),
+    "insider_buy_total_usd": ("higher_is_better",
+                               ["early_signals.insider_min_usd", "early_signals.single_insider_min_usd"],
+                               "Insider-Kaufbetrag ($)", None),
+    "large_holder_pct": ("higher_is_better",
+                          ["early_signals.single_large_holder_13g_min_pct"],
+                          "13D/13G-Anteil (%)", None),
+}
+
+
+def _cfg_get(cfg: dict, dotted_key: str):
+    node = cfg
+    for part in dotted_key.split("."):
+        if not isinstance(node, dict):
+            return None
+        node = node.get(part)
+    return node
+
+
+def _confidence(n_pos: int, n_neg: int) -> str:
+    """Grobe Einordnung, wie ernst ein Vorschlag zu nehmen ist – KEIN echter
+    Signifikanztest, nur eine simple Stichprobengrößen-Heuristik."""
+    n = min(n_pos, n_neg)
+    if n >= 15:
+        return "hoch"
+    if n >= 5:
+        return "mittel"
+    return "niedrig"
+
+
+def _suggest_adjustments(cfg: dict, system: str, report: dict) -> list[dict]:
+    """Vergleicht Mittelwerte zwischen Positiv-/Negativ-Gruppe und schlägt bei
+    auffälligem Unterschied (>=20% relative Differenz) eine konkrete
+    Config-Anpassung vor. Grobe Faustregel auf Basis von Mittelwerten, kein
+    statistischer Test – Konfidenz (Stichprobengröße) wird immer mitgegeben.
+
+    Wichtig: wenn die Negativ-Gruppe bei einer eigentlich 'höher=besser'
+    gewerteten Metrik den höheren Wert hat (unexpected_inverse), wird KEIN
+    einfacher 'Schwelle anheben'-Vorschlag gemacht – das wäre in diesem Fall
+    falsch (siehe VYNE-Fall 2026-08-06: extreme Volumen-z-Scores korrelierten
+    in der ersten Stichprobe mit SCHLECHTERER, nicht besserer Performance)."""
+    pos, neg = report["pos_group"], report["neg_group"]
+    conf = _confidence(pos["n"], neg["n"])
+    levers = _SENTIMENT_LEVERS if system == "sentiment" else _EARLY_LEVERS
+    suggestions = []
+
+    for metric, (direction, config_keys, label, weight_hint) in levers.items():
+        pos_stat = pos["stats"].get(metric) if system == "sentiment" else pos.get(metric)
+        neg_stat = neg["stats"].get(metric) if system == "sentiment" else neg.get(metric)
+        if not pos_stat or not neg_stat:
+            continue
+        pos_mean, neg_mean = pos_stat.get("mean"), neg_stat.get("mean")
+        if pos_mean is None or neg_mean is None:
+            continue
+
+        base = max(abs(pos_mean), abs(neg_mean), 1e-9)
+        rel_diff = (pos_mean - neg_mean) / base
+        if abs(rel_diff) < 0.2:
+            continue  # kein auffälliger Unterschied
+
+        expected_sign = 1 if direction == "higher_is_better" else -1
+        actual_sign = 1 if rel_diff > 0 else -1
+        confirms = actual_sign == expected_sign
+
+        entry = {
+            "metric": metric, "label": label, "direction": direction,
+            "pos_mean": pos_mean, "neg_mean": neg_mean,
+            "rel_diff_pct": round(rel_diff * 100, 1),
+            "config_keys": config_keys, "confidence": conf,
+        }
+
+        cmp_word = "höherer" if direction == "higher_is_better" else "niedrigerer"
+        verb = "anheben" if direction == "higher_is_better" else "senken"
+
+        if confirms and config_keys:
+            suggested = round((pos_mean + neg_mean) / 2, 2)
+            current_vals = {k: _cfg_get(cfg, k) for k in config_keys}
+            entry["kind"] = "raise_threshold"
+            entry["suggested_value"] = suggested
+            entry["current_values"] = current_vals
+            entry["text"] = (
+                f"{label}: Positiv-Gruppe Ø {pos_mean} vs. Negativ-Gruppe Ø {neg_mean} "
+                f"({cmp_word} Wert = bessere Performance, bestätigt bisherige Annahme). "
+                f"Faustregel-Vorschlag: {', '.join(config_keys)} (aktuell {current_vals}) "
+                f"Richtung {suggested} {verb}, um näher am Profil der Positiv-Gruppe zu filtern."
+            )
+        elif confirms:
+            entry["kind"] = "observation_confirms"
+            entry["text"] = (
+                f"{label}: Positiv-Gruppe Ø {pos_mean} vs. Negativ-Gruppe Ø {neg_mean} "
+                f"({cmp_word} Wert = bessere Performance, bestätigt bisherige Annahme). "
+                f"Kein config.json-Schwellenwert vorhanden – Kandidat für eine Gewichts-Anpassung im Code "
+                f"({weight_hint or 'siehe Score-Formel'})."
+            )
+        else:
+            entry["kind"] = "unexpected_inverse"
+            entry["text"] = (
+                f"{label}: Negativ-Gruppe hat hier den höheren/'stärkeren' Wert (Ø {neg_mean} vs. "
+                f"Ø {pos_mean} in der Positiv-Gruppe) – WIDERSPRICHT der bisherigen Annahme "
+                f"'{cmp_word} Wert = stärkeres Signal'. Kein einfacher Schwellenwert-Vorschlag möglich "
+                f"(bräuchte z.B. eine Obergrenze statt nur eine Untergrenze) – eher ein Hinweis, extreme "
+                f"Werte hier nicht unreflektiert als Bonus zu werten."
+            )
+
+        suggestions.append(entry)
+
+    suggestions.sort(key=lambda s: -abs(s["rel_diff_pct"]))
+    return suggestions
+
+
 # ── Sentiment-Scan-Analyse ─────────────────────────────────────────────────────
 
 _SENTIMENT_VALUE_COLS = ["score", "bullish_pct", "bearish_pct", "buzz",
@@ -263,6 +392,9 @@ def analyze_and_store(cfg: dict, system: str) -> dict:
     else:
         raise ValueError(f"Unbekanntes System: {system!r}")
 
+    if not report.get("insufficient_data"):
+        report["suggestions"] = _suggest_adjustments(cfg, system, report)
+
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     today = date.today().isoformat()
     period_start = report.get("period_start", today)
@@ -336,6 +468,11 @@ def run_weekly_analysis(cfg: dict) -> None:
                     f"Insider-Cluster: {pos.get('insider_cluster_pct')}% vs "
                     f"{neg.get('insider_cluster_pct')}%"
                 )
+            top_sugg = (r.get("suggestions") or [None])[0]
+            if top_sugg:
+                flag = "⚠️ " if top_sugg["kind"] == "unexpected_inverse" else "💡 "
+                lines.append(f"{flag}{top_sugg['label']}: {top_sugg['rel_diff_pct']:+.0f}% Unterschied "
+                             f"(Konfidenz: {top_sugg['confidence']})")
         lines.append("")
     lines.append("Details im Analyse-Tab der App.")
     _tg_post("\n".join(lines))
@@ -365,10 +502,14 @@ def generate_ai_text(report_row: dict, system: str) -> dict:
         f"positiv und negativ performenden Empfehlungen (Kursrendite {HORIZON} "
         f"Handelstage später).\n\n"
         f"{json.dumps(report, ensure_ascii=False, indent=2)}\n\n"
-        "Schreibe eine kurze, konkrete deutsche Zusammenfassung (max. 150 Wörter): "
-        "Was unterscheidet die positive von der negativen Gruppe am deutlichsten? "
-        "Welche Komponente(n) wirken am aussagekräftigsten? Nenne keine "
-        "Anlageempfehlung, nur die beobachteten Muster in den Daten."
+        "Im Feld 'suggestions' stehen bereits regelbasiert berechnete Auffälligkeiten "
+        "(inkl. 'unexpected_inverse' = Fälle, in denen die bisherige Annahme 'höherer "
+        "Wert = stärkeres Signal' den Daten widerspricht). Schreibe eine kurze, "
+        "konkrete deutsche Zusammenfassung (max. 150 Wörter): Ordne diese Vorschläge "
+        "fachlich ein – welche sind angesichts der Stichprobengröße plausibel, welche "
+        "eher Zufall? Was unterscheidet die positive von der negativen Gruppe am "
+        "deutlichsten? Nenne keine Anlageempfehlung, nur die beobachteten Muster in "
+        "den Daten und deren Belastbarkeit."
     )
 
     client = anthropic.Anthropic(api_key=os.environ.get("CLAUDE_API_KEY", ""))
