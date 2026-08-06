@@ -238,10 +238,10 @@ def _do_full_scan():
         log.exception("Vollständiger Scan-Fehler")
 
 
-def _do_portfolio_scan():
+def _do_portfolio_scan(force: bool = False):
     if not _load_cfg().get("scan_enabled", True):
         return
-    if not _market_open():
+    if not force and not _market_open():
         return
     from scanner import run_portfolio_scan, SCAN_STATUS
     if SCAN_STATUS.get("running"):
@@ -410,7 +410,7 @@ def api_portfolio_scan_trigger():
     from scanner import SCAN_STATUS
     if SCAN_STATUS.get("running"):
         return jsonify({"ok": False, "message": "Scan läuft bereits"}), 409
-    threading.Thread(target=_do_portfolio_scan, daemon=True).start()
+    threading.Thread(target=_do_portfolio_scan, kwargs={"force": True}, daemon=True).start()
     return jsonify({"ok": True, "message": "Portfolio-Scan gestartet"})
 
 
