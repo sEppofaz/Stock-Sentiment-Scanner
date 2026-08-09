@@ -97,6 +97,19 @@ CREATE TABLE IF NOT EXISTS weekly_reports (
     ai_generated_ts    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_weekly_reports_system_ts ON weekly_reports(system, report_ts DESC);
+
+CREATE TABLE IF NOT EXISTS daily_picks (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    pick_date           TEXT NOT NULL UNIQUE,  -- Handelstag America/New_York, YYYY-MM-DD
+    ticker              TEXT,                   -- NULL wenn kein Pick
+    source              TEXT,                   -- 'early_signals' | 'sentiment_scan' | 'cross_signal'
+    source_alert_id     INTEGER REFERENCES alerts(id),
+    source_snapshot_id  INTEGER REFERENCES scan_snapshots(id),
+    reasoning_json      TEXT NOT NULL,
+    price_at_pick       REAL,
+    created_ts          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_daily_picks_date ON daily_picks(pick_date DESC);
 """
 
 

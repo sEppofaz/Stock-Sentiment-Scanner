@@ -112,13 +112,6 @@ def _load_portfolio() -> list[dict]:
         return []
 
 
-def _save_portfolio(data: list[dict]):
-    path = BASE_DIR / "portfolio.json"
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-    tmp.rename(path)
-
-
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 
 NYSE_TZ = ZoneInfo("America/New_York")
@@ -233,6 +226,21 @@ def _reschedule():
             hour="6-22", minute="8,23,38,53", day_of_week="mon-fri",
             timezone="America/New_York", id="es_instant",
         )
+        # Layer 6: Tages-Konsolidierung (Top-1-Pick) – nach scan_tracker (18:00),
+        # damit sowohl ein heutiger Vollscan als auch alle Frühsignal-Alerts des
+        # Tages als Kandidaten vorliegen
+        scheduler.add_job(
+            _do_daily_pick, "cron", hour=18, minute=5,
+            day_of_week="mon-fri", timezone="America/New_York", id="daily_pick",
+        )
+        # Verkaufssignal-Check: Minuten-Raster Rest 1 mod 5 (Fable-Fix #3) – der
+        # einzige freie Slot ggü. edgar_scan(0)/portfolio_scan(2)/es_instant(3)/
+        # ownership_scan(4), NICHT */5 (kollidiert garantiert mit edgar_scan)
+        scheduler.add_job(
+            _do_sell_signal_check, "cron",
+            hour="9-16", minute="1,6,11,16,21,26,31,36,41,46,51,56", day_of_week="mon-fri",
+            timezone="America/New_York", id="sell_signal_check",
+        )
 
     log.info(
         "Scan-Zeiten: %s (Mo–Fr UTC) + Portfolio-Scan alle 15 Min :12/:27/:42/:57 America/New_York (gestaffelt ggü. EDGAR-Jobs)",
@@ -344,6 +352,28 @@ def _do_es_instant():
         check_instant_alerts(cfg)
     except Exception:
         log.exception("Instant-Alert-Check fehlgeschlagen")
+
+
+def _do_daily_pick():
+    cfg = _load_cfg()
+    if not cfg.get("early_signals", {}).get("enabled", False):
+        return
+    try:
+        from layer6_daily_pick import run_daily_pick
+        run_daily_pick(cfg)
+    except Exception:
+        log.exception("Tages-Pick fehlgeschlagen")
+
+
+def _do_sell_signal_check():
+    cfg = _load_cfg()
+    if not cfg.get("early_signals", {}).get("enabled", False):
+        return
+    try:
+        from layer6_sell_signal import check_frühsignal_sell_exits
+        check_frühsignal_sell_exits(cfg)
+    except Exception:
+        log.exception("Verkaufssignal-Check fehlgeschlagen")
 
 
 def _do_scan_tracker():
@@ -529,12 +559,6 @@ def api_portfolio_add():
         # Ticker in onclick-Handler im Frontend landen (M6, XSS-Härtung)
         return jsonify({"error": "ticker ungültig"}), 400
 
-    portfolio = _load_portfolio()
-
-    # Duplikat prüfen
-    if any(p["ticker"] == ticker for p in portfolio):
-        return jsonify({"error": "Ticker bereits im Portfolio"}), 409
-
     try:
         shares = float(body.get("shares", 0))
         buy_price = float(body.get("buy_price", 0))
@@ -555,8 +579,22 @@ def api_portfolio_add():
         "sell_signal": False,
         "sell_reason": None,
     }
-    portfolio.append(entry)
-    _save_portfolio(portfolio)
+
+    # Duplikat-Check innerhalb des Locks (nicht nur vorab) – sonst TOCTOU-Race
+    # zwischen zwei gleichzeitigen Requests für denselben Ticker
+    from scanner import _update_portfolio
+    duplicate = False
+
+    def _add_mutator(cur):
+        nonlocal duplicate
+        if any(p["ticker"] == ticker for p in cur):
+            duplicate = True
+            return cur
+        return cur + [entry]
+
+    _update_portfolio(_add_mutator)
+    if duplicate:
+        return jsonify({"error": "Ticker bereits im Portfolio"}), 409
 
     # Sofort Quote + Sentiment holen (Hintergrundthread)
     def _init():
@@ -570,12 +608,18 @@ def api_portfolio_add():
 @app.route("/sentiment/api/portfolio/<ticker>", methods=["DELETE"])
 def api_portfolio_delete(ticker: str):
     ticker = ticker.upper()
-    portfolio = _load_portfolio()
-    before = len(portfolio)
-    portfolio = [p for p in portfolio if p["ticker"] != ticker]
-    if len(portfolio) == before:
+    from scanner import _update_portfolio
+    found = False
+
+    def _del_mutator(cur):
+        nonlocal found
+        filtered = [p for p in cur if p["ticker"] != ticker]
+        found = len(filtered) != len(cur)
+        return filtered
+
+    _update_portfolio(_del_mutator)
+    if not found:
         return jsonify({"error": "Nicht gefunden"}), 404
-    _save_portfolio(portfolio)
     return jsonify({"ok": True})
 
 
@@ -584,15 +628,107 @@ def api_portfolio_update(ticker: str):
     """Sell-Signal manuell zurücksetzen."""
     ticker = ticker.upper()
     body = request.get_json(force=True)
-    portfolio = _load_portfolio()
-    for p in portfolio:
-        if p["ticker"] == ticker:
-            if "sell_signal" in body:
-                p["sell_signal"] = bool(body["sell_signal"])
-                p["sell_reason"] = None
-            _save_portfolio(portfolio)
-            return jsonify({"ok": True})
-    return jsonify({"error": "Nicht gefunden"}), 404
+    from scanner import _update_portfolio
+    found = False
+
+    def _upd_mutator(cur):
+        nonlocal found
+        for p in cur:
+            if p["ticker"] == ticker:
+                found = True
+                if "sell_signal" in body:
+                    p["sell_signal"] = bool(body["sell_signal"])
+                    p["sell_reason"] = None
+                    p["sell_signal_source"] = None
+        return cur
+
+    _update_portfolio(_upd_mutator)
+    if not found:
+        return jsonify({"error": "Nicht gefunden"}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/sentiment/api/portfolio/<ticker>/convert", methods=["PATCH"])
+def api_portfolio_convert(ticker: str):
+    """Wandelt eine Auto-Watch-Beobachtungsposition (watch:true, 1 Test-Aktie)
+    in eine echte, tatsächlich gekaufte Position um (Josef-Wunsch 2026-08-09) –
+    ersetzt die Platzhalterwerte durch die tatsächlichen Kaufdaten."""
+    ticker = ticker.upper()
+    body = request.get_json(force=True)
+    try:
+        shares = float(body.get("shares", 0))
+        buy_price = float(body.get("buy_price", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "shares/buy_price müssen numerisch sein"}), 400
+    if shares <= 0 or buy_price <= 0:
+        return jsonify({"error": "shares/buy_price müssen größer 0 sein"}), 400
+    buy_date = body.get("buy_date")
+
+    from scanner import _update_portfolio
+    result = {"status": None}
+
+    def _conv_mutator(cur):
+        for p in cur:
+            if p["ticker"] == ticker:
+                if not p.get("watch"):
+                    result["status"] = "not_watch"
+                    return cur
+                p["watch"] = False
+                p["shares"] = shares
+                p["buy_price"] = buy_price
+                if buy_date:
+                    p["buy_date"] = buy_date
+                result["status"] = "ok"
+                return cur
+        result["status"] = "not_found"
+        return cur
+
+    _update_portfolio(_conv_mutator)
+    if result["status"] == "not_found":
+        return jsonify({"error": "Nicht gefunden"}), 404
+    if result["status"] == "not_watch":
+        return jsonify({"error": "Ticker ist bereits eine echte Position"}), 400
+    return jsonify({"ok": True})
+
+
+# ── API: Layer 6 – Tages-Pick + Verkaufssignal-Check ───────────────────────────
+
+@app.route("/sentiment/api/daily-pick/latest")
+def api_daily_pick_latest():
+    from signals_db import get_conn
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT pick_date, ticker, source, reasoning_json, price_at_pick, created_ts "
+            "FROM daily_picks ORDER BY pick_date DESC LIMIT 1").fetchone()
+    if row is None:
+        return jsonify({"exists": False})
+    d = dict(row)
+    d["reasoning"] = json.loads(d.pop("reasoning_json") or "{}")
+    return jsonify({"exists": True, **d})
+
+
+@app.route("/sentiment/api/daily-pick/run", methods=["POST"])
+def api_daily_pick_run():
+    body = request.get_json(force=True, silent=True) or {}
+    force = bool(body.get("force"))
+    try:
+        from layer6_daily_pick import run_daily_pick_manual
+        result = run_daily_pick_manual(_load_cfg(), force=force)
+        return jsonify({"ok": True, **result})
+    except Exception:
+        log.exception("Manueller Tages-Pick-Lauf fehlgeschlagen")
+        return jsonify({"ok": False, "error": "Tages-Pick fehlgeschlagen"}), 500
+
+
+@app.route("/sentiment/api/sell-signal-check/run", methods=["POST"])
+def api_sell_signal_check_run():
+    try:
+        from layer6_sell_signal import check_frühsignal_sell_exits
+        check_frühsignal_sell_exits(_load_cfg())
+        return jsonify({"ok": True})
+    except Exception:
+        log.exception("Manueller Verkaufssignal-Check fehlgeschlagen")
+        return jsonify({"ok": False, "error": "Verkaufssignal-Check fehlgeschlagen"}), 500
 
 
 @app.route("/sentiment/api/costs")

@@ -28,19 +28,29 @@ def _auto_watch(cfg: dict, ticker: str, price: float | None) -> None:
         return
     if price is None:
         return
-    from scanner import _load_portfolio, _save_portfolio
-    portfolio = _load_portfolio()
-    if any(p["ticker"] == ticker for p in portfolio):
-        return
-    portfolio.append({
-        "ticker": ticker, "name": "", "shares": 1, "buy_price": price,
-        "buy_date": datetime.now(timezone.utc).date().isoformat(),
-        "last_sentiment": None, "current_price": price,
-        "current_value": round(price, 2), "pnl": 0.0, "pnl_pct": 0.0,
-        "sell_signal": False, "sell_reason": None, "watch": True,
-    })
-    _save_portfolio(portfolio)
-    log.info("Auto-Watch: %s als Beobachtung ins Portfolio aufgenommen (Kurs %s)", ticker, price)
+    # _update_portfolio() statt _load_portfolio()/_save_portfolio(): Lock +
+    # Mutation auf dem AKTUELLEN Dateiinhalt (BKM Atomic-Write-Pattern.md) –
+    # verhindert Lost-Update ggü. den anderen nebenläufigen Schreibquellen
+    # (Portfolio-Scan, layer6_sell_signal.py, Web-Endpoints).
+    from scanner import _update_portfolio
+    added = False
+
+    def _mutator(cur):
+        nonlocal added
+        if any(p["ticker"] == ticker for p in cur):
+            return cur
+        added = True
+        return cur + [{
+            "ticker": ticker, "name": "", "shares": 1, "buy_price": price,
+            "buy_date": datetime.now(timezone.utc).date().isoformat(),
+            "last_sentiment": None, "current_price": price,
+            "current_value": round(price, 2), "pnl": 0.0, "pnl_pct": 0.0,
+            "sell_signal": False, "sell_reason": None, "watch": True,
+        }]
+
+    _update_portfolio(_mutator)
+    if added:
+        log.info("Auto-Watch: %s als Beobachtung ins Portfolio aufgenommen (Kurs %s)", ticker, price)
 
 
 def _create_alert(cfg: dict, ticker: str, sigs: list, total_score: float,

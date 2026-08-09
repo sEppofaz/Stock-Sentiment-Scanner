@@ -233,6 +233,19 @@ tr:last-child td{border-bottom:none}
 .es-alert-score{font-size:1.1rem;font-weight:800;color:var(--accent2)}
 .es-alert-date{font-size:.75rem;color:var(--muted);margin-bottom:8px}
 .es-alert-price{font-size:.8rem;color:var(--muted)}
+.pick-card{background:var(--bg2);border-radius:14px;padding:16px;margin-bottom:10px;border:1.5px solid var(--accent)}
+.pick-card.pick-none{border-color:var(--bg3);text-align:center;padding:14px}
+.pick-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+.pick-ticker{font-size:1.3rem;font-weight:800}
+.pick-price{font-size:1.05rem;font-weight:700;color:var(--accent2)}
+.pick-date{font-size:.75rem;color:var(--muted);margin-bottom:10px}
+.pick-list{list-style:none;padding:0;margin:0 0 8px}
+.pick-list li{font-size:.8rem;padding:5px 0;border-top:1px solid var(--bg3)}
+.pick-list li:first-child{border-top:none}
+.pick-sentiment{font-size:.78rem;color:var(--muted);margin-bottom:8px}
+.pick-disclaimer{font-size:.68rem;color:var(--muted)}
+.pick-none-txt{font-weight:700;margin-bottom:4px}
+.pick-none-sub{font-size:.78rem;color:var(--muted)}
 .es-signal-item{background:var(--bg2);border-radius:12px;padding:10px 12px;margin-bottom:8px}
 .es-signal-top{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:3px}
 .es-signal-left{display:flex;align-items:baseline;gap:8px;min-width:0}
@@ -324,6 +337,10 @@ tr:last-child td{border-bottom:none}
       <div class="pb-track"><div class="pb-fill" id="pb-fill"></div></div>
       <div class="pb-ticker" id="pb-ticker"></div>
       <button id="btn-abort" onclick="abortScan()">Scan abbrechen</button>
+    </div>
+    <div id="dash-pick" style="display:none;margin-bottom:14px">
+      <div class="section-title">🎯 Heutiger Tages-Pick</div>
+      <div id="dash-pick-content"></div>
     </div>
     <div id="dash-early" style="display:none;margin-bottom:14px">
       <div class="section-title">🔮 Frühsignale</div>
@@ -927,6 +944,59 @@ async function loadResults() {
     renderResults();
   } catch { showEmpty(); }
   loadDashboardEarly();
+  loadDailyPick();
+}
+
+const PICK_SOURCE_LABEL = {
+  cross_signal: 'Beide Systeme (Cross-Signal)',
+  early_signals: 'Frühsignale',
+  sentiment_scan: 'Sentiment-Scan',
+};
+
+async function loadDailyPick() {
+  try {
+    const r = await fetch('/sentiment/api/daily-pick/latest');
+    const d = await r.json();
+    const box = document.getElementById('dash-pick');
+    const content = document.getElementById('dash-pick-content');
+    if (!d.exists) { box.style.display = 'none'; return; }
+    box.style.display = 'block';
+    const dateTxt = d.pick_date
+      ? new Date(d.pick_date).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric' })
+      : '';
+    const reasoning = d.reasoning || {};
+
+    if (!d.ticker) {
+      const grund = reasoning.grund || 'keine Kandidaten erfüllten die Kriterien';
+      const n = reasoning.kandidaten_geprüft ?? 0;
+      content.innerHTML = `<div class="pick-card pick-none">
+        <div class="pick-none-txt">Kein Tages-Pick (${esc(dateTxt)})</div>
+        <div class="pick-none-sub">${n} Kandidaten geprüft – ${esc(grund)}</div>
+      </div>`;
+      return;
+    }
+
+    const price = d.price_at_pick != null ? `$${d.price_at_pick.toFixed(2)}` : '–';
+    const confirmations = (reasoning.confirmations || []).map(c => `<li>${esc(c)}</li>`).join('');
+    const signals = (reasoning.signals || []).map(s => `<li>${esc(s.detail)}</li>`).join('');
+    const ss = reasoning.sentiment_scan;
+    const ssTxt = ss
+      ? `<div class="pick-sentiment">Sentiment-Scan: Rang ${ss.rank ?? '–'} · Bullish ${ss.bullish_pct ?? '–'}% · Bearish ${ss.bearish_pct ?? '–'}% · Score ${ss.score ?? '–'}</div>`
+      : '';
+    content.innerHTML = `<div class="pick-card">
+      <div class="pick-hd">
+        <span class="pick-ticker">${esc(d.ticker)}</span>
+        <span class="pick-price">${price}</span>
+      </div>
+      <div class="pick-date">${esc(dateTxt)} · Quelle: ${esc(PICK_SOURCE_LABEL[d.source] || d.source || '–')}</div>
+      ${confirmations ? `<ul class="pick-list">${confirmations}</ul>` : ''}
+      ${signals ? `<ul class="pick-list">${signals}</ul>` : ''}
+      ${ssTxt}
+      <div class="pick-disclaimer">Kein Anlagerat – Validierung läuft.</div>
+    </div>`;
+  } catch (e) {
+    document.getElementById('dash-pick').style.display = 'none';
+  }
 }
 
 async function loadDashboardEarly() {
@@ -1224,6 +1294,7 @@ async function loadPortfolio() {
       </div>` : ''}
       <div class="pf-btns" style="margin-top:10px">
         ${sell ? `<button class="btn-reset-signal" onclick="resetSignal('${p.ticker}')">Signal zurücksetzen</button>` : '<div style="flex:1"></div>'}
+        ${watch ? `<button class="btn-reset-signal" onclick="convertToReal('${p.ticker}')">Zu echter Position machen</button>` : ''}
         <button class="btn-del" onclick="deleteFromPortfolio('${p.ticker}')">Löschen</button>
       </div>
     </div>`;
@@ -1233,6 +1304,31 @@ async function loadPortfolio() {
 async function deleteFromPortfolio(ticker) {
   if (!confirm(`${ticker} wirklich aus dem Portfolio entfernen?`)) return;
   await fetch(`/sentiment/api/portfolio/${ticker}`, { method: 'DELETE' });
+  loadPortfolio();
+}
+
+async function convertToReal(ticker) {
+  const sharesStr = prompt(`${ticker}: Wie viele Aktien hast du tatsächlich gekauft?`);
+  if (sharesStr === null) return;
+  const shares = parseFloat(sharesStr);
+  if (!shares || shares <= 0) { alert('Ungültige Anzahl.'); return; }
+
+  const priceStr = prompt(`${ticker}: Zu welchem Kurs (Einstand pro Aktie in $)?`);
+  if (priceStr === null) return;
+  const buy_price = parseFloat(priceStr);
+  if (!buy_price || buy_price <= 0) { alert('Ungültiger Kurs.'); return; }
+
+  const buy_date = prompt(`${ticker}: Kaufdatum (YYYY-MM-DD, leer = heute)?`) || undefined;
+
+  const r = await fetch(`/sentiment/api/portfolio/${ticker}/convert`, {
+    method: 'PATCH',
+    body: JSON.stringify({ shares, buy_price, buy_date }),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    alert(d.error || 'Umwandeln fehlgeschlagen.');
+    return;
+  }
   loadPortfolio();
 }
 

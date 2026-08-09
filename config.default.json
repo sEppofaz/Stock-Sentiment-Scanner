@@ -32,5 +32,14 @@
     "single_large_holder_13g_min_pct": 7.0,
     "auto_watch": true,
     "max_instant_alerts_per_day": 5
+  },
+  "daily_pick": {
+    "enabled": true,
+    "max_volume_z": 30,
+    "min_avg_volume_10d": 0.1,
+    "min_float_shares": 5,
+    "repick_cooldown_days": 5,
+    "min_score_early_signals": 5,
+    "min_score_sentiment_scan": 60
   }
 }

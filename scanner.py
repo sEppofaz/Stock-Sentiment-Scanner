@@ -1,5 +1,6 @@
 import os
 import csv
+import fcntl
 import html
 import json
 import logging
@@ -129,6 +130,51 @@ def _save_portfolio(data: list[dict]):
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
     tmp.rename(path)
+
+
+_portfolio_lock = threading.Lock()
+
+
+def _update_portfolio(mutator_fn):
+    """Lock + Tempfile + atomares Rename (BKM Atomic-Write-Pattern.md). mutator_fn
+    bekommt den AKTUELLEN Dateiinhalt (nicht einen älteren Snapshot) und gibt die
+    neue Liste zurück. Pflicht seit portfolio.json mehrere nebenläufige
+    Schreibquellen hat (Web-Endpoints, run_portfolio_scan() alle 15 Min,
+    layer6_sell_signal.py alle 5 Min) – ohne Lock verliert der zuletzt
+    schreibende Job stillschweigend die Änderungen des anderen (live als reales
+    Risiko identifiziert, Fable-Review 2026-08-09, nicht nur theoretisch)."""
+    path = BASE_DIR / "portfolio.json"
+    with _portfolio_lock:
+        path.touch(exist_ok=True)
+        with open(path, "r+") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                raw = f.read()
+                current = json.loads(raw) if raw.strip() else []
+                updated = mutator_fn(current)
+                tmp = path.with_suffix(".tmp")
+                tmp.write_text(json.dumps(updated, ensure_ascii=False, indent=2))
+                os.replace(tmp, path)
+                return updated
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
+
+
+def _merge_portfolio_updates(computed: list[dict]) -> None:
+    """Wendet die während eines (potenziell mehrere Minuten laufenden)
+    Portfolio-Scans berechneten Updates auf den zum Speicherzeitpunkt
+    AKTUELLEN Dateiinhalt an, statt die am Lauf-Anfang geladene (ggf.
+    inzwischen veraltete) Liste blind zu überschreiben. Ticker, die
+    zwischenzeitlich von einem anderen Prozess gelöscht wurden, bleiben
+    gelöscht; Ticker, die zwischenzeitlich neu hinzugekommen sind (z.B.
+    _auto_watch() aus einem Frühsignal-Alert), bleiben erhalten – nur die
+    hier berechneten Felder für die VERARBEITETEN Ticker werden übernommen."""
+    updates = {e["ticker"]: e for e in computed}
+
+    def _merge(current: list[dict]) -> list[dict]:
+        return [updates.get(e["ticker"], e) for e in current]
+
+    _update_portfolio(_merge)
 
 
 def _calc_score(d: dict) -> float:
@@ -670,13 +716,21 @@ def _run_portfolio_scan_inner(portfolio: list[dict]) -> None:
             if signal:
                 entry["sell_signal"] = True
                 entry["sell_reason"] = reason
+                entry["sell_signal_source"] = "sentiment"
                 log.info("SELL-SIGNAL %s: %s", ticker, reason)
                 _send_telegram_sell(entry, sent, price, reason)
         else:
-            # Signal zurücksetzen wenn Stimmung wieder gut
-            if sent["bullish_pct"] >= 40 and sent["bearish_pct"] <= 30:
-                entry["sell_signal"] = False
-                entry["sell_reason"] = None
+            # Signal zurücksetzen wenn Stimmung wieder gut – NUR wenn das
+            # Signal selbst aus der Sentiment-Logik stammt. Ein Frühsignal-
+            # Gegensignal (z.B. Insider-Verkauf, layer6_sell_signal.py) ist
+            # nicht "aufgelöst", nur weil das Sentiment gerade wieder gut
+            # aussieht – sonst würde es hier stillschweigend gelöscht
+            # (Cross-Contamination-Bug, Fable-Review 2026-08-09).
+            if entry.get("sell_signal_source", "sentiment") == "sentiment":
+                if sent["bullish_pct"] >= 40 and sent["bearish_pct"] <= 30:
+                    entry["sell_signal"] = False
+                    entry["sell_reason"] = None
+                    entry["sell_signal_source"] = None
 
         # last_sentiment aktualisieren (_news_texts/_day_counts nie persistieren)
         entry["last_sentiment"] = {
@@ -700,7 +754,7 @@ def _run_portfolio_scan_inner(portfolio: list[dict]) -> None:
         still_stale = sum(1 for e in stale_entries if e["price_stale"])
         log.info("Portfolio-Scan Retry fertig: %d/%d weiterhin ohne Kurs", still_stale, len(stale_entries))
 
-    _save_portfolio(portfolio)
+    _merge_portfolio_updates(portfolio)
     log.info("Portfolio-Scan fertig")
 
 
@@ -719,7 +773,7 @@ def _update_portfolio_quotes(portfolio: list[dict]) -> None:
         for entry in stale_entries:
             _apply_price(entry, _fetch_quote(entry["ticker"]))
 
-    _save_portfolio(portfolio)
+    _merge_portfolio_updates(portfolio)
 
 
 # ── Datei-Helfer ──────────────────────────────────────────────────────────────

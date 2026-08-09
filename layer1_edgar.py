@@ -100,7 +100,12 @@ def _txt(el, path, default=""):
 
 
 def _parse_form4(root: ET.Element) -> dict | None:
-    """Extrahiert Kauf-Transaktionen (Code P). None wenn kein Kauf enthalten."""
+    """Extrahiert Kauf- (Code P/Acquired) UND Verkaufs-Transaktionen (Code
+    S/Disposed) GETRENNT aus derselben XML (ein Filing kann beides enthalten,
+    z.B. Optionsausübung+Teilverkauf). None nur wenn WEDER Kauf NOCH Verkauf
+    vorhanden ist – vorher brach die Funktion bei total_usd<=0 sofort ab und
+    hätte reine Verkaufs-Filings (der häufigste Fall) verworfen, bevor
+    insider_sell als Gegensignal existierte (Fable-Review 2026-08-09)."""
     symbol = _txt(root, ".//issuer/issuerTradingSymbol").upper()
     if not symbol:
         return None
@@ -111,25 +116,30 @@ def _parse_form4(root: ET.Element) -> dict | None:
 
     total_usd = 0.0
     total_shares = 0.0
+    sell_total_usd = 0.0
+    sell_total_shares = 0.0
     for tx in root.findall(".//nonDerivativeTable/nonDerivativeTransaction"):
         code = _txt(tx, ".//transactionCoding/transactionCode")
         acq = _txt(tx, ".//transactionAmounts/transactionAcquiredDisposedCode/value")
-        if code != "P" or acq != "A":
-            continue
         try:
             shares = float(_txt(tx, ".//transactionAmounts/transactionShares/value", "0") or 0)
             price = float(_txt(tx, ".//transactionAmounts/transactionPricePerShare/value", "0") or 0)
         except ValueError:
             continue
-        total_shares += shares
-        total_usd += shares * price
+        if code == "P" and acq == "A":
+            total_shares += shares
+            total_usd += shares * price
+        elif code == "S" and acq == "D":
+            sell_total_shares += shares
+            sell_total_usd += shares * price
 
-    if total_usd <= 0:
+    if total_usd <= 0 and sell_total_usd <= 0:
         return None
     return {
         "symbol": symbol, "owner": owner, "is_director": is_director,
         "is_officer": is_officer, "officer_title": officer_title,
         "total_usd": round(total_usd, 2), "total_shares": total_shares,
+        "sell_total_usd": round(sell_total_usd, 2), "sell_total_shares": sell_total_shares,
     }
 
 
@@ -154,7 +164,7 @@ def run_edgar_scan(cfg: dict) -> None:
     min_usd = es_cfg.get("insider_min_usd", 25000)
     universe = _load_universe()
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    new_count, hit_count = 0, 0
+    new_count, hit_count, sell_hit_count = 0, 0, 0
 
     with get_conn() as conn:
         seen = {r["accession_no"] for r in conn.execute("SELECT accession_no FROM edgar_seen")}
@@ -181,34 +191,67 @@ def run_edgar_scan(cfg: dict) -> None:
                 root = _fetch_form4_xml(e["index_url"])
                 if root is None:
                     continue
-                buy = _parse_form4(root)
+                parsed = _parse_form4(root)
             except Exception as exc:
                 log.warning("EDGAR %s: %s", e["accession"], exc)
                 continue
-            if buy is None or buy["symbol"] not in universe or buy["total_usd"] < min_usd:
+            if parsed is None or parsed["symbol"] not in universe:
                 continue
-            if not _market_cap_ok(buy["symbol"], cfg):
+            if not _market_cap_ok(parsed["symbol"], cfg):
                 continue
 
-            # Cluster-Check: ≥2 verschiedene Insider desselben Tickers in 7 Kalendertagen
-            with get_conn() as conn:
-                others = conn.execute(
-                    "SELECT details_json FROM signals WHERE ticker=? AND signal_type='insider_buy' "
-                    "AND signal_ts >= strftime('%Y-%m-%dT%H:%M:%S', 'now', '-7 days')", (buy["symbol"],)).fetchall()
-            other_owners = {json.loads(r["details_json"]).get("owner") for r in others}
-            cluster = len(other_owners - {buy["owner"]}) >= 1
-
-            score = 3.0 + (2.0 if cluster else 0.0)
-            details = dict(buy)
-            details["cluster"] = cluster
-            details["filing_url"] = e["index_url"]
             signal_ts = _normalize_ts(e.get("updated"), now_iso)
-            insert_signal(buy["symbol"], "insider_buy", signal_ts, score, details)
-            hit_count += 1
-            log.info("EDGAR Insider-Kauf: %s %s %.0f USD (cluster=%s)",
-                     buy["symbol"], buy["owner"], buy["total_usd"], cluster)
+
+            if parsed["total_usd"] >= min_usd:
+                # Cluster-Check: ≥2 verschiedene Insider desselben Tickers in 7 Kalendertagen
+                with get_conn() as conn:
+                    others = conn.execute(
+                        "SELECT details_json FROM signals WHERE ticker=? AND signal_type='insider_buy' "
+                        "AND signal_ts >= strftime('%Y-%m-%dT%H:%M:%S', 'now', '-7 days')",
+                        (parsed["symbol"],)).fetchall()
+                other_owners = {json.loads(r["details_json"]).get("owner") for r in others}
+                cluster = len(other_owners - {parsed["owner"]}) >= 1
+
+                score = 3.0 + (2.0 if cluster else 0.0)
+                details = {
+                    "symbol": parsed["symbol"], "owner": parsed["owner"],
+                    "is_director": parsed["is_director"], "is_officer": parsed["is_officer"],
+                    "officer_title": parsed["officer_title"],
+                    "total_usd": parsed["total_usd"], "total_shares": parsed["total_shares"],
+                    "cluster": cluster, "filing_url": e["index_url"],
+                }
+                insert_signal(parsed["symbol"], "insider_buy", signal_ts, score, details)
+                hit_count += 1
+                log.info("EDGAR Insider-Kauf: %s %s %.0f USD (cluster=%s)",
+                         parsed["symbol"], parsed["owner"], parsed["total_usd"], cluster)
+
+            if parsed["sell_total_usd"] >= min_usd:
+                # Gegensignal (Veto-Kriterium für Layer 6) – gleicher Mindestbetrag
+                # wie beim Kauf, sonst würden Routine-Verkäufe (10b5-1-Pläne)
+                # praktisch täglich auslösen (Fable-Review 2026-08-09)
+                with get_conn() as conn:
+                    others = conn.execute(
+                        "SELECT details_json FROM signals WHERE ticker=? AND signal_type='insider_sell' "
+                        "AND signal_ts >= strftime('%Y-%m-%dT%H:%M:%S', 'now', '-7 days')",
+                        (parsed["symbol"],)).fetchall()
+                other_owners = {json.loads(r["details_json"]).get("owner") for r in others}
+                sell_cluster = len(other_owners - {parsed["owner"]}) >= 1
+
+                sell_score = 3.0 + (2.0 if sell_cluster else 0.0)
+                sell_details = {
+                    "symbol": parsed["symbol"], "owner": parsed["owner"],
+                    "is_director": parsed["is_director"], "is_officer": parsed["is_officer"],
+                    "officer_title": parsed["officer_title"],
+                    "total_usd": parsed["sell_total_usd"], "total_shares": parsed["sell_total_shares"],
+                    "cluster": sell_cluster, "filing_url": e["index_url"],
+                }
+                insert_signal(parsed["symbol"], "insider_sell", signal_ts, sell_score, sell_details)
+                sell_hit_count += 1
+                log.info("EDGAR Insider-Verkauf: %s %s %.0f USD (cluster=%s)",
+                         parsed["symbol"], parsed["owner"], parsed["sell_total_usd"], sell_cluster)
 
         if page_all_seen:
             break
 
-    log.info("EDGAR-Lauf fertig: %d neue Filings, %d Kaufsignale", new_count, hit_count)
+    log.info("EDGAR-Lauf fertig: %d neue Filings, %d Kaufsignale, %d Verkaufssignale",
+              new_count, hit_count, sell_hit_count)
