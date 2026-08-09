@@ -422,6 +422,7 @@ tr:last-child td{border-bottom:none}
               <option value="EUR">€</option>
             </select>
           </div>
+          <div style="font-size:.68rem;color:var(--muted);margin-top:3px">Achtung bei Broker-Apps (z.B. eToro): Der Stückpreis steht dort oft ohne Symbol in der Handelswährung (bei US-Aktien meist $) – nur Summen wie „Nettowert"/„Gewinn" sind in €. Nur bei tatsächlich in € gezahltem Betrag € wählen.</div>
         </div>
         <div class="pf-field">
           <div class="pf-label">Kaufdatum</div>
@@ -1438,7 +1439,7 @@ async function convertToReal(ticker) {
   const shares = parseFloat(sharesStr);
   if (!shares || shares <= 0) { alert('Ungültige Anzahl.'); return; }
 
-  const currencyStr = (prompt(`${ticker}: Währung des Einstandskurses – "usd" oder "eur"? (leer = usd)`) || 'usd').trim().toLowerCase();
+  const currencyStr = (prompt(`${ticker}: Währung des Einstandskurses – "usd" oder "eur"? (leer = usd)\n\nAchtung bei Broker-Apps wie eToro: Der Stückpreis steht dort oft ohne Symbol bereits in USD, nur Summen wie "Nettowert" sind in €.`) || 'usd').trim().toLowerCase();
   const currency = currencyStr === 'eur' ? 'EUR' : 'USD';
 
   const priceStr = prompt(`${ticker}: Zu welchem Kurs (Einstand pro Aktie in ${currency === 'EUR' ? '€' : '$'})?`);
