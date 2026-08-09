@@ -227,6 +227,8 @@ tr:last-child td{border-bottom:none}
 .an-sugg-hd{font-size:.78rem;font-weight:700;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;gap:8px}
 .an-sugg-conf{font-size:.68rem;font-weight:400;color:var(--muted);white-space:nowrap}
 .an-sugg-text{font-size:.8rem;color:var(--muted);line-height:1.4}
+.an-sugg-applied{font-size:.75rem;color:var(--accent2);margin-top:6px;font-weight:600}
+.an-sugg-skipped{font-size:.7rem;color:var(--muted);margin-top:2px}
 .es-alert-card{background:var(--bg2);border-radius:14px;padding:14px;margin-bottom:10px}
 .es-alert-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
 .es-alert-ticker{font-size:1rem;font-weight:700}
@@ -479,6 +481,13 @@ tr:last-child td{border-bottom:none}
       </div>
     </div>
     <div class="cfg-section">
+      <div class="cfg-title">Performance-Analyse</div>
+      <div class="cfg-row">
+        <span class="cfg-label">Intervall (Tage)</span>
+        <input class="cfg-input" type="number" id="cfg-wa-interval" min="1" max="30">
+      </div>
+    </div>
+    <div class="cfg-section">
       <div class="cfg-title">Frühsignale</div>
       <div class="cfg-row">
         <span class="cfg-label">Frühsignal-Layer aktiv</span>
@@ -641,6 +650,7 @@ tr:last-child td{border-bottom:none}
     <div class="an-actions">
       <button class="btn-an-run" id="btn-an-run" onclick="runAnalysis()">Jetzt analysieren</button>
       <button class="btn-an-ai" id="btn-an-ai" onclick="runAnalysisAI()" title="Kostet ca. $0.01–0.05 pro Klick (Claude Haiku)">✨ KI-Analyse</button>
+      <button class="btn-an-run" id="btn-an-scan" onclick="triggerScanFromAnalysis()" title="Startet einen neuen Vollscan mit den aktuellen (ggf. automatisch angepassten) Einstellungen">🔄 Jetzt neu scannen</button>
     </div>
     <div id="an-ai-text"></div>
   </div>
@@ -794,8 +804,21 @@ tr:last-child td{border-bottom:none}
         <div class="info-disclaimer">Validierungsphase: Die Hypothese, dass diese Frühindikatoren tatsächlich vorhersagekräftig sind, ist unbewiesen. Erst nach 2–3 Monaten Datenhistorie ist die Statistik belastbar. Kein Investment-Advice.</div>
       </div>
 
+      <!-- Performance-Analyse -->
+      <div class="info-section">
+        <div class="info-section-title">Performance-Analyse (Tab „Analyse")</div>
+        <p class="info-p">Vergleicht regelmäßig positiv vs. negativ performende Empfehlungen (Kursrendite 20 Handelstage später), getrennt für Sentiment-Scan, Frühsignale und die Überschneidung beider Systeme (Cross-Signal). Zeigt, welche Eigenschaften die beiden Gruppen unterschieden haben.</p>
+        <p class="info-p"><b>Läuft automatisch</b> im einstellbaren Intervall (Standard täglich, „Intervall (Tage)" in den Einstellungen) nach Börsenschluss, sobald die frischen Kursrenditen des Tages nachgetragen sind. 0 € Kosten – reine SQL-Auswertung, kein Claude-Call.</p>
+        <p class="info-p"><b>Automatische Übernahme der Basis-Schwelle:</b> Ergibt sich ein statistisch auffälliger, die bisherige Annahme bestätigender Unterschied (💡 „Schwellenwert-Vorschlag"), wird der vorgeschlagene Zahlenwert automatisch in die passende Basis-Einstellung übernommen (z.&nbsp;B. <code>early_signals.volume_z_min</code>) – erkennbar an der grünen „✅ Automatisch übernommen"-Markierung auf der Vorschlagskarte. Gibt es zu diesem Hebel zusätzlich eine höhere, bewusst separate Schwelle (z.&nbsp;B. die Einzelsignal-Schwelle für Instant-Alerts), bleibt die unangetastet – sonst würde der beabsichtigte Sicherheitsabstand zwischen „Signal zählt überhaupt" und „Signal ist stark genug für einen Soforteinzel-Alert" eingeebnet.</p>
+        <p class="info-p"><b>„⚠️ Widerspricht bisheriger Annahme"</b>-Vorschläge werden NIE automatisch übernommen – hier hätte ein einfaches „Schwelle anheben" die falsche Richtung, das bleibt eine reine Information zum selbst Einordnen.</p>
+        <p class="info-p"><b>Neue Erkenntnis-Alarm:</b> Taucht ein Vorschlag auf, der im letzten Report noch nicht da war, kommt sofort eine eigene Telegram-Nachricht – unabhängig vom Wochentag. Die ausführliche Zusammenfassung aller drei Dimensionen kommt weiterhin nur einmal wöchentlich (Montag), damit trotz täglicher Analyse keine Telegram-Dauerbeschallung entsteht.</p>
+        <p class="info-p"><b>„🔄 Jetzt neu scannen":</b> Startet sofort einen neuen Vollscan mit den aktuellen (ggf. gerade automatisch angepassten) Einstellungen, statt auf den nächsten planmäßigen Scan zu warten. Löst KEINEN automatischen Scan aus, wenn ein Schwellenwert übernommen wurde – das bleibt bewusst dein manueller Klick.</p>
+        <p class="info-p"><b>✨ KI-Analyse</b> ist davon unabhängig: ein optionaler, kostenpflichtiger Klick, der aus dem bereits berechneten Report einen kurzen erklärenden Fließtext schreiben lässt – liefert keine eigenen Zahlen und wird nie automatisch ausgelöst.</p>
+        <div class="info-disclaimer">Erste aussagekräftige Ergebnisse erst nach mehreren Wochen Datensammlung (Mindeststichprobe 15 gereifte Datenpunkte je Gruppe). Kein Investment-Advice.</div>
+      </div>
+
       <div class="info-disclaimer">Kein Investment-Advice. Nur Sentiment-Daten aus Medienberichten. Keine Kauf- oder Verkaufsempfehlung.</div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.15 · 2026-08-09</p>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.16 · 2026-08-09</p>
     </div>
   </div>
 </div>
@@ -1090,6 +1113,30 @@ function showEmpty() {
   document.getElementById('empty').style.display = 'block';
 }
 
+async function triggerScanFromAnalysis() {
+  const day = new Date().getDay();
+  if (day === 0 || day === 6) {
+    alert('Kein Scan am Wochenende – die Börse ist geschlossen.');
+    return;
+  }
+  if (!confirm('Jetzt einen neuen Vollscan mit den aktuellen Einstellungen starten? Dauert ca. 30–90 Minuten.')) return;
+  const btn = document.getElementById('btn-an-scan');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/sentiment/api/scan', { method: 'POST' });
+    if (r.status === 409) {
+      alert('Es läuft bereits ein Scan.');
+    } else {
+      switchTab('dashboard');
+      startPolling();
+    }
+  } catch (e) {
+    alert('Scan konnte nicht gestartet werden.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function triggerScan() {
   const day = new Date().getDay();
   if (day === 0 || day === 6) {
@@ -1363,6 +1410,9 @@ async function loadConfig() {
   document.getElementById('cfg-buzz-rising').checked = f.buzz_trend_rising;
   document.getElementById('cfg-top-n').value = cfg.top_n_results;
 
+  const wa = cfg.weekly_analysis || {};
+  document.getElementById('cfg-wa-interval').value = wa.interval_days ?? 1;
+
   const es = cfg.early_signals || {};
   document.getElementById('cfg-es-enabled').checked = es.enabled === true;
   document.getElementById('cfg-es-auto-watch').checked = es.auto_watch !== false;
@@ -1412,6 +1462,10 @@ async function saveConfig() {
       buzz_trend_rising: document.getElementById('cfg-buzz-rising').checked,
     },
     top_n_results: +document.getElementById('cfg-top-n').value,
+    weekly_analysis: {
+      ..._cfg.weekly_analysis,
+      interval_days: +document.getElementById('cfg-wa-interval').value,
+    },
     early_signals: {
       enabled: document.getElementById('cfg-es-enabled').checked,
       auto_watch: document.getElementById('cfg-es-auto-watch').checked,
@@ -1720,11 +1774,21 @@ function anSuggestions(suggestions) {
   if (!suggestions || !suggestions.length) {
     return '<div class="es-note">Keine auffälligen Unterschiede zwischen den Gruppen gefunden (oder Differenz &lt;20%).</div>';
   }
-  const cards = suggestions.map(s => `
+  const cards = suggestions.map(s => {
+    let appliedHtml = '';
+    if (s.applied) {
+      appliedHtml = `<div class="an-sugg-applied">✅ Automatisch übernommen: <code>${esc(s.applied_key)}</code> = ${esc(String(s.applied_value))}${s.applied_ts ? ' (' + esDate(s.applied_ts) + ')' : ''}</div>`;
+      if (s.skipped_keys && s.skipped_keys.length) {
+        appliedHtml += `<div class="an-sugg-skipped">Bewusst unverändert: ${s.skipped_keys.map(k => `<code>${esc(k)}</code>`).join(', ')} (höhere Einzelsignal-Schwelle, siehe Info-Sheet)</div>`;
+      }
+    }
+    return `
     <div class="an-sugg-card an-sugg-${s.kind}">
       <div class="an-sugg-hd">${esc(AN_KIND_LABEL[s.kind] || s.kind)} <span class="an-sugg-conf">${esc(AN_CONF_LABEL[s.confidence] || s.confidence)}</span></div>
       <div class="an-sugg-text">${esc(s.text)}</div>
-    </div>`).join('');
+      ${appliedHtml}
+    </div>`;
+  }).join('');
   return `<div class="section-title" style="margin-top:16px">Anpassungsvorschläge (regelbasiert)</div>${cards}`;
 }
 

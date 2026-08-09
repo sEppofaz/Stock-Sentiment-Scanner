@@ -97,6 +97,10 @@ def _validate_cfg(cfg) -> str | None:
     if "top_n_results" in cfg and not isinstance(cfg["top_n_results"], (int, float)):
         return "top_n_results muss numerisch sein"
 
+    wa = cfg.get("weekly_analysis", {})
+    if "interval_days" in wa and (not isinstance(wa["interval_days"], (int, float)) or wa["interval_days"] < 1):
+        return "weekly_analysis.interval_days muss eine Zahl >= 1 sein"
+
     return None
 
 
@@ -177,13 +181,19 @@ def _reschedule():
         day_of_week="mon-fri", timezone="America/New_York", id="scan_tracker",
     )
 
-    # Wöchentliche Performance-Analyse: Mo 06:50 ET, kollidiert mit keinem der
-    # Minuten-Raster oben (0/15/30/45, 4/19/34/49, 8/23/38/53), vor Marktöffnung,
-    # rein SQL-basiert (kein Finnhub/yfinance-Call in der Analyse selbst)
+    # Performance-Analyse: läuft täglich (Mo-Fr 18:10 ET, direkt nach den
+    # beiden Tracker-Jobs scan_tracker/es_tracker um 18:00/17:45 ET, die die
+    # frischen Kursrenditen nachtragen – vorher hätte die Analyse mit
+    # veralteten Daten gerechnet), entscheidet aber intern per
+    # weekly_analysis.interval_days selbst, ob sie an einem gegebenen Tag
+    # tatsächlich läuft (Josef-Wunsch 2026-08-09: Intervall einstellbar, ohne
+    # dass der Scheduler-Job selbst bei jeder Config-Änderung neu gebaut
+    # werden muss). Trotz des Namens "weekly_analysis" (Job-ID/Config-Block
+    # aus Kompatibilitätsgründen unverändert) läuft der Job seither täglich.
     if cfg.get("weekly_analysis", {}).get("enabled", True):
         scheduler.add_job(
-            _do_weekly_analysis, "cron", hour=6, minute=50,
-            day_of_week="mon", timezone="America/New_York", id="weekly_analysis",
+            _do_weekly_analysis, "cron", hour=18, minute=10,
+            day_of_week="mon-fri", timezone="America/New_York", id="weekly_analysis",
         )
 
     # Frühsignale (EARLY_SIGNALS_UMSETZUNG.md)
@@ -509,9 +519,8 @@ def api_config_set():
     err = _validate_cfg(cfg)
     if err:
         return jsonify({"ok": False, "error": err}), 400
-    (BASE_DIR / "config.json").write_text(
-        json.dumps(cfg, indent=2, ensure_ascii=False)
-    )
+    from scanner import _update_config
+    _update_config(lambda _current: cfg)
     _reschedule()
     return jsonify({"ok": True})
 

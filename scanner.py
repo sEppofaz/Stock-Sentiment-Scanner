@@ -160,6 +160,33 @@ def _update_portfolio(mutator_fn):
                 fcntl.flock(f, fcntl.LOCK_UN)
 
 
+_config_lock = threading.Lock()
+
+
+def _update_config(mutator_fn):
+    """Lock + Tempfile + atomares Rename (BKM Atomic-Write-Pattern.md), analog
+    _update_portfolio(). Pflicht seit config.json einen zweiten automatischen
+    Schreiber hat (weekly_analysis._apply_suggestions(), täglich) zusätzlich
+    zum bisher einzigen manuellen Schreiber (POST /api/config) – ohne Lock
+    könnte ein zeitgleiches manuelles Speichern die automatische
+    Schwellenwert-Anpassung überschreiben oder umgekehrt (2026-08-09)."""
+    path = BASE_DIR / "config.json"
+    with _config_lock:
+        path.touch(exist_ok=True)
+        with open(path, "r+") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                raw = f.read()
+                current = json.loads(raw) if raw.strip() else {}
+                updated = mutator_fn(current)
+                tmp = path.with_suffix(".tmp")
+                tmp.write_text(json.dumps(updated, indent=2, ensure_ascii=False))
+                os.replace(tmp, path)
+                return updated
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
+
+
 def _merge_portfolio_updates(computed: list[dict]) -> None:
     """Wendet die während eines (potenziell mehrere Minuten laufenden)
     Portfolio-Scans berechneten Updates auf den zum Speicherzeitpunkt

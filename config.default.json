@@ -13,6 +13,7 @@
   "top_n_results": 50,
   "weekly_analysis": {
     "enabled": true,
+    "interval_days": 1,
     "sentiment_pos_threshold_pct": 10,
     "sentiment_neg_threshold_pct": -10,
     "early_signals_pos_threshold_pct": 15,

@@ -13,6 +13,7 @@ import os
 import statistics
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import anthropic
 
@@ -23,6 +24,7 @@ log = logging.getLogger("scanner")
 
 MIN_SAMPLE = 15
 HORIZON = 20  # Handelstage, auf dem die Gruppierung basiert (langfristigster Horizont)
+_ET = ZoneInfo("America/New_York")
 
 
 # ── Statistik-Helfer ──────────────────────────────────────────────────────────
@@ -149,6 +151,14 @@ def _cfg_get(cfg: dict, dotted_key: str):
     return node
 
 
+def _cfg_set(cfg: dict, dotted_key: str, value) -> None:
+    parts = dotted_key.split(".")
+    node = cfg
+    for part in parts[:-1]:
+        node = node.setdefault(part, {})
+    node[parts[-1]] = value
+
+
 def _confidence(n_pos: int, n_neg: int) -> str:
     """Grobe Einordnung, wie ernst ein Vorschlag zu nehmen ist – KEIN echter
     Signifikanztest, nur eine simple Stichprobengrößen-Heuristik."""
@@ -238,6 +248,65 @@ def _suggest_adjustments(cfg: dict, system: str, report: dict) -> list[dict]:
 
     suggestions.sort(key=lambda s: -abs(s["rel_diff_pct"]))
     return suggestions
+
+
+def _apply_suggestions(system: str, suggestions: list[dict]) -> list[dict]:
+    """Übernimmt automatisch die BASIS-Schwelle (erster config_key) jedes
+    raise_threshold-Vorschlags nach config.json (Josef-Wunsch 2026-08-09,
+    'vollautomatisch'). Weitere config_keys desselben Vorschlags (z.B. bei den
+    Frühsignal-Hebeln die deutlich höhere Einzelsignal-Schwelle
+    single_volume_z_min neben der Basis-Schwelle volume_z_min) werden bewusst
+    NICHT automatisch geändert – ein einzelner vorgeschlagener Wert würde sonst
+    den beabsichtigten Sicherheitsabstand zwischen 'Signal zählt überhaupt'
+    und 'Signal ist stark genug für einen sofortigen Einzel-Alert' einebnen
+    (ADR-014). Mutiert und gibt `suggestions` zurück, jetzt mit
+    applied/applied_key/applied_value/applied_ts bzw. skipped_keys pro
+    Eintrag – wird 1:1 in weekly_reports.report_json persistiert, damit die
+    PWA anzeigen kann, was automatisch passiert ist."""
+    to_apply = {}
+    for s in suggestions:
+        s["applied"] = False
+        if s.get("kind") != "raise_threshold" or not s.get("config_keys"):
+            continue
+        base_key, *other_keys = s["config_keys"]
+        to_apply[base_key] = s["suggested_value"]
+        s["applied"] = True
+        s["applied_key"] = base_key
+        s["applied_value"] = s["suggested_value"]
+        if other_keys:
+            s["skipped_keys"] = other_keys
+
+    if not to_apply:
+        return suggestions
+
+    from scanner import _update_config
+
+    def _mutator(cur):
+        for key, value in to_apply.items():
+            _cfg_set(cur, key, value)
+        return cur
+
+    _update_config(_mutator)
+
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    for s in suggestions:
+        if s.get("applied"):
+            s["applied_ts"] = now_iso
+            old_val = (s.get("current_values") or {}).get(s["applied_key"])
+            log.info("Analyse (%s): %s automatisch übernommen (%s -> %s)",
+                      system, s["applied_key"], old_val, s["applied_value"])
+
+    return suggestions
+
+
+def _new_findings(prev_suggestions: list[dict] | None, new_suggestions: list[dict]) -> list[dict]:
+    """Vorschläge (identifiziert über metric+kind), die im vorherigen Report
+    für dasselbe System noch nicht vorkamen – die 'fundamentalen
+    Erkenntnisse', die einen sofortigen Telegram-Alert auslösen dürfen
+    (Josef-Wunsch 2026-08-09: nicht jeden Tag dieselbe, unveränderte
+    Erkenntnis erneut melden)."""
+    prev_keys = {(s["metric"], s["kind"]) for s in (prev_suggestions or [])}
+    return [s for s in new_suggestions if (s["metric"], s["kind"]) not in prev_keys]
 
 
 # ── Sentiment-Scan-Analyse ─────────────────────────────────────────────────────
@@ -498,18 +567,52 @@ def get_latest_report(system: str) -> dict | None:
     return d
 
 
-def run_weekly_analysis(cfg: dict) -> None:
-    """Scheduler-Einstiegspunkt: analysiert alle drei Dimensionen, verschickt
-    eine Telegram-Nachricht mit allen Abschnitten. 0 Kosten (kein Claude-Call)."""
+def _should_run_today(cfg: dict) -> bool:
+    """Selbst-Throttle statt dynamischem Scheduler-Rescheduling: der Job läuft
+    IMMER täglich (Mo-Fr 18:10 ET), entscheidet aber pro Lauf anhand
+    weekly_analysis.interval_days (Default 1 = jeden Werktag), ob heute
+    tatsächlich analysiert wird. Ändert Josef das Intervall in den
+    Einstellungen, wirkt das damit sofort beim nächsten Lauf, ohne dass der
+    Scheduler selbst neu gebaut werden muss."""
+    interval_days = cfg.get("weekly_analysis", {}).get("interval_days", 1)
+    if interval_days <= 1:
+        return True
+    latest = get_latest_report("sentiment")  # Referenzsystem – alle 3 laufen synchron
+    if latest is None:
+        return True
+    last_ts = datetime.fromisoformat(latest["report_ts"])
+    if last_ts.tzinfo is None:
+        last_ts = last_ts.replace(tzinfo=timezone.utc)
+    days_since = (datetime.now(timezone.utc) - last_ts).total_seconds() / 86400
+    return days_since >= interval_days
+
+
+def _send_new_findings_alert(new_findings: list[dict]) -> None:
+    """Eigene, sofortige Telegram-Nachricht für 'fundamentale Erkenntnisse'
+    (Josef-Wunsch 2026-08-09) – NEUE Vorschläge ggü. dem letzten Report,
+    unabhängig vom Wochentag. Bewusst getrennt von der ausführlichen
+    Wochenzusammenfassung (die bleibt 1x/Woche), sonst wäre das nach dem
+    Nachrichtenflut-Fix vom selben Tag wieder eine tägliche Dauerbeschallung."""
     from scanner import _tg_post
+    label_map = {"sentiment": "Sentiment-Scan", "early_signals": "Frühsignale"}
+    lines = ["🔎 <b>Neue Erkenntnis aus der Analyse</b>", ""]
+    for f in new_findings:
+        flag = "⚠️" if f["kind"] == "unexpected_inverse" else "💡"
+        lines.append(f"{flag} <b>{label_map.get(f['system'], f['system'])}</b>: {f['label']} "
+                     f"({f['rel_diff_pct']:+.0f}%, Konfidenz {f['confidence']})")
+        if f.get("applied"):
+            lines.append(f"   → automatisch übernommen: {f['applied_key']} = {f['applied_value']}")
+            if f.get("skipped_keys"):
+                lines.append(f"   ({', '.join(f['skipped_keys'])} bewusst unverändert, siehe Info-Sheet)")
+    lines.append("")
+    lines.append("Details im Analyse-Tab – dort bei Bedarf auch 'Jetzt neu scannen'.")
+    _tg_post("\n".join(lines))
 
-    reports = {}
-    for system in ("sentiment", "early_signals", "cross_signal"):
-        try:
-            reports[system] = analyze_and_store(cfg, system)
-        except Exception:
-            log.exception("Wöchentliche Analyse fehlgeschlagen (%s)", system)
 
+def _send_weekly_summary(reports: dict) -> None:
+    """Ausführliche Zusammenfassung aller drei Dimensionen – bleibt bewusst
+    nur 1x/Woche (Montag), unabhängig vom Analyse-Intervall."""
+    from scanner import _tg_post
     lines = ["📈 <b>Wöchentliche Performance-Analyse</b>", ""]
     for system, label in (("sentiment", "Sentiment-Scan"), ("early_signals", "Frühsignale"),
                           ("cross_signal", "Cross-Signal (beide Systeme)")):
@@ -554,6 +657,55 @@ def run_weekly_analysis(cfg: dict) -> None:
         lines.append("")
     lines.append("Details im Analyse-Tab der App.")
     _tg_post("\n".join(lines))
+
+
+def run_weekly_analysis(cfg: dict) -> None:
+    """Scheduler-Einstiegspunkt: läuft täglich (Mo-Fr 18:10 ET, nach den
+    Tracker-Jobs) – entscheidet selbst per _should_run_today(), ob heute
+    tatsächlich analysiert wird. Übernimmt bestätigte Schwellenwert-
+    Vorschläge automatisch (_apply_suggestions, nur die Basis-Schwelle, siehe
+    ADR-014), meldet NEUE Erkenntnisse sofort per Telegram
+    (_send_new_findings_alert), verschickt die ausführliche Zusammenfassung
+    aber weiterhin nur 1x/Woche (Montag). 0 Kosten (kein Claude-Call)."""
+    if not _should_run_today(cfg):
+        log.info("Analyse übersprungen – Intervall (%s Tage) noch nicht erreicht",
+                  cfg.get("weekly_analysis", {}).get("interval_days", 1))
+        return
+
+    prev_reports = {s: get_latest_report(s) for s in ("sentiment", "early_signals")}
+
+    reports = {}
+    for system in ("sentiment", "early_signals", "cross_signal"):
+        try:
+            reports[system] = analyze_and_store(cfg, system)
+        except Exception:
+            log.exception("Analyse fehlgeschlagen (%s)", system)
+
+    all_new_findings = []
+    for system in ("sentiment", "early_signals"):
+        report = reports.get(system)
+        if not report or report.get("insufficient_data"):
+            continue
+        suggestions = report.get("suggestions") or []
+        _apply_suggestions(system, suggestions)
+        # report_json enthält jetzt applied/applied_key/... – bereits
+        # gespeicherte Zeile (analyze_and_store) nachträglich annotieren
+        with get_conn() as conn:
+            conn.execute("UPDATE weekly_reports SET report_json=? WHERE id=?",
+                         (json.dumps(report, ensure_ascii=False), report["id"]))
+
+        prev = prev_reports.get(system)
+        prev_suggestions = None
+        if prev and not prev["report_json"].get("insufficient_data"):
+            prev_suggestions = prev["report_json"].get("suggestions")
+        for f in _new_findings(prev_suggestions, suggestions):
+            all_new_findings.append({"system": system, **f})
+
+    if all_new_findings:
+        _send_new_findings_alert(all_new_findings)
+
+    if datetime.now(_ET).weekday() == 0:  # Montag
+        _send_weekly_summary(reports)
 
 
 def generate_ai_text(report_row: dict, system: str) -> dict:
