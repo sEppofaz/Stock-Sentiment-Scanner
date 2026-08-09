@@ -19,19 +19,6 @@ def _et_day_start_utc_iso() -> str:
     return start_et.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
 
-def _detail_line(s) -> str:
-    d = json.loads(s["details_json"] or "{}")
-    if s["signal_type"] == "insider_buy":
-        extra = html.escape(d.get("filing_url", ""))
-    elif s["signal_type"] == "volume_anomaly":
-        extra = f"z={d.get('z_score')}"
-    elif s["signal_type"] == "large_holder":
-        extra = f"{d.get('form_type', '?')} {d.get('pct', '?')}% – {html.escape(d.get('owner', ''))}"
-    else:
-        extra = f"accel={d.get('rel_accel')}"
-    return f"• {s['signal_type']} {s['signal_ts'][:16]} {extra}"
-
-
 def _auto_watch(cfg: dict, ticker: str, price: float | None) -> None:
     """Fügt den Ticker automatisch als Beobachtung (1 Test-Aktie, kein echter
     Kauf) ins Portfolio ein, wenn er noch nicht drin ist – damit die
@@ -57,12 +44,18 @@ def _auto_watch(cfg: dict, ticker: str, price: float | None) -> None:
 
 
 def _create_alert(cfg: dict, ticker: str, sigs: list, total_score: float,
-                   cooldown_days: int, tag: str = "", kind: str = "instant") -> bool:
-    """Cooldown-Check + Alert-Insert + forward_returns + Telegram + Auto-Watch.
+                   cooldown_days: int, tag: str = "", kind: str = "instant") -> dict | None:
+    """Cooldown-Check + Alert-Insert + forward_returns + Auto-Watch.
     Gemeinsamer Pfad für run_scoring() (Kombi, täglich, kind='combo') und
     check_instant_alerts() (starkes Einzelsignal, alle 15 Min, kind='instant').
-    True wenn tatsächlich ausgelöst (False bei aktivem Cooldown)."""
-    from scanner import _tg_post, _fetch_quote
+    Gibt bei Erfolg {"ticker", "total_score"} zurück, sonst None (Cooldown aktiv).
+
+    Verschickt selbst KEIN Telegram mehr (bis 2026-08-09: eine Nachricht pro
+    Alert – bei 185 Alerts in einem Lauf am 2026-08-07 entsprechend 185
+    Nachrichten, Josef-Feedback "das ist mir zu viel"). Der Aufrufer sammelt
+    die Ergebnisse aller Alerts EINES Laufs und verschickt genau eine
+    Sammel-Nachricht (siehe _send_digest())."""
+    from scanner import _fetch_quote
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     with get_conn() as conn:
@@ -70,7 +63,7 @@ def _create_alert(cfg: dict, ticker: str, sigs: list, total_score: float,
             "SELECT 1 FROM alerts WHERE ticker=? AND alert_ts >= strftime('%Y-%m-%dT%H:%M:%S', 'now', ?)",
             (ticker, f"-{cooldown_days} days")).fetchone()
     if recent_alert:
-        return False
+        return None
 
     price = _fetch_quote(ticker)
     sig_ids = [s["id"] for s in sigs]
@@ -89,15 +82,27 @@ def _create_alert(cfg: dict, ticker: str, sigs: list, total_score: float,
                 [(alert_id, h) for h in (1, 5, 20)])
 
     label = f" ({tag})" if tag else ""
-    lines = [f"🔮 <b>Frühsignal: {html.escape(ticker)}</b>{label} — Score {total_score:.0f}"]
-    for s in sorted(sigs, key=lambda x: x["signal_ts"]):
-        lines.append(_detail_line(s))
-    lines.append(f"Kurs: {price if price else '–'} USD | kein Anlagerat, Validierung läuft")
-    _tg_post("\n".join(lines))
     log.info("Frühsignal-Alert: %s score=%.0f%s", ticker, total_score, label)
 
     _auto_watch(cfg, ticker, price)
-    return True
+    return {"ticker": ticker, "total_score": total_score}
+
+
+def _send_digest(created: list[dict], header: str) -> None:
+    """Eine einzige Telegram-Sammel-Nachricht pro Lauf statt einer je Alert
+    (Josef-Feedback 2026-08-09) – nur Ticker-Liste + Hinweis auf die App,
+    Details (Signal-Typen, Kurs) stehen im Früh-Tab."""
+    if not created:
+        return
+    from scanner import _tg_post
+    tickers = [c["ticker"] for c in created]
+    preview = ", ".join(html.escape(t) for t in tickers[:8])
+    more = f" (+{len(tickers) - 8} weitere)" if len(tickers) > 8 else ""
+    _tg_post(
+        f"{header}\n"
+        f"{len(created)} neue Frühsignale: {preview}{more}\n"
+        f"Details im Früh-Tab der App – kein Anlagerat, Validierung läuft."
+    )
 
 
 def run_scoring(cfg: dict) -> None:
@@ -117,7 +122,7 @@ def run_scoring(cfg: dict) -> None:
     for r in rows:
         by_ticker.setdefault(r["ticker"], []).append(r)
 
-    alert_count = 0
+    created = []
     for ticker, sigs in by_ticker.items():
         types = {s["signal_type"] for s in sigs}
         if len(types) < min_types:
@@ -139,10 +144,12 @@ def run_scoring(cfg: dict) -> None:
         total = sum(best.values())
         if total < min_score:
             continue
-        if _create_alert(cfg, ticker, sigs, total, cooldown, kind="combo"):
-            alert_count += 1
+        result = _create_alert(cfg, ticker, sigs, total, cooldown, kind="combo")
+        if result:
+            created.append(result)
 
-    log.info("Scoring fertig: %d Alerts", alert_count)
+    _send_digest(created, "📊 <b>Tages-Scoring (Frühsignale)</b>")
+    log.info("Scoring fertig: %d Alerts", len(created))
 
 
 def check_instant_alerts(cfg: dict) -> None:
@@ -199,7 +206,7 @@ def check_instant_alerts(cfg: dict) -> None:
     candidates.sort(key=lambda r: r["score"] or 0, reverse=True)
 
     day_start = _et_day_start_utc_iso()
-    fired = 0
+    created = []
     for r in candidates:
         with get_conn() as conn:
             today_scores = [row["total_score"] or 0 for row in conn.execute(
@@ -208,9 +215,11 @@ def check_instant_alerts(cfg: dict) -> None:
         allow = len(today_scores) < max_per_day or (r["score"] or 0) > min(today_scores)
         if not allow:
             continue
-        if _create_alert(cfg, r["ticker"], [r], r["score"], cooldown,
-                          tag="Einzelsignal, stark", kind="instant"):
-            fired += 1
+        result = _create_alert(cfg, r["ticker"], [r], r["score"], cooldown,
+                               tag="Einzelsignal, stark", kind="instant")
+        if result:
+            created.append(result)
 
-    if fired:
-        log.info("Instant-Alerts: %d ausgelöst (Tages-Limit %d)", fired, max_per_day)
+    _send_digest(created, "🔮 <b>Neue Instant-Frühsignale</b>")
+    if created:
+        log.info("Instant-Alerts: %d ausgelöst (Tages-Limit %d)", len(created), max_per_day)

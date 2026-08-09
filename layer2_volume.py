@@ -64,7 +64,13 @@ def run_volume_scan(cfg: dict) -> None:
             base = [float(v) for v in vol.iloc[-21:-1]]
             mean_v = statistics.mean(base)
             sd_v = statistics.stdev(base)
-            if sd_v == 0:
+            # Numerisch instabil bei nahezu konstantem Volumen: eine winzige
+            # Standardabweichung lässt z bei jeder kleinsten Abweichung
+            # explodieren (live gefunden 2026-08-07: z=11598 für einen Ticker
+            # mit quasi unverändertem Tagesvolumen -> 185 Alerts in einem
+            # Lauf). Mindest-Variationskoeffizient (sd/mean >= 5%) als
+            # statistische Plausibilitätsgrenze, bevor der z-Score vertraut wird.
+            if sd_v == 0 or mean_v <= 0 or sd_v < mean_v * 0.05:
                 continue
             z = (today_vol - mean_v) / sd_v
             if z < z_min or not _news_flat(sym):
