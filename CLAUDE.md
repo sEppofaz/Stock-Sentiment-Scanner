@@ -268,6 +268,16 @@ Neue dritte Analyse-Dimension `cross_signal` (neben `sentiment`/`early_signals`)
 - **PWA:** dritter System-Toggle „Cross-Signal" im Analyse-Tab, eigene `anCrossCard()`-Rendering-Funktion (einfacher als `anGroupCard()`, da keine Score-Komponenten-Vergleiche nötig).
 - **`app.py`-Endpoints:** alle drei (`/latest`, `/run`, `/run-ai`) akzeptieren jetzt `system=cross_signal` zusätzlich zu `sentiment`/`early_signals`.
 
+## Frühsignal-Nachrichtenflut behoben (2026-08-09)
+
+Josef-Feedback: am 07.08. kurz vor Mitternacht über 100 Frühsignal-Telegram-Nachrichten erhalten – „das ist mir zu viel, kann ich nicht auswerten und mach damit eher gar nichts".
+
+- **Root Cause (aus `scan.log` rekonstruiert):** `run_scoring()` (täglicher Kombi-Lauf, 17:35 ET) erzeugte an diesem Abend **185 Alerts in einem Durchlauf** (+5 Instant-Alerts = 190). Ursache: `layer2_volume.py` berechnete den Volumen-z-Score als `(today_vol - mean_v) / sd_v` ohne Plausibilitätsprüfung der Standardabweichung – bei einem Ticker mit nahezu konstantem Tagesvolumen wird `sd_v` numerisch winzig, wodurch `z` bei jeder kleinsten Abweichung explodiert (live beobachtet: `z=11598` für „MB", `z=1719` für „WFF" – statistisch nicht plausibel, kein echtes Marktsignal, klassischer Fall einer instabilen Division durch eine Fast-Null-Standardabweichung).
+- **Fix 1 (Signal-Qualität):** Mindest-Variationskoeffizient `sd_v >= mean_v * 0.05` als statistische Untergrenze in `layer2_volume.py`, bevor der z-Score als Anomalie gilt.
+- **Fix 2 (Notification-Architektur, unabhängig von Fix 1):** `_create_alert()` verschickt selbst kein Telegram mehr, gibt stattdessen `{"ticker", "total_score"}` zurück (oder `None` bei aktivem Cooldown). `run_scoring()`/`check_instant_alerts()` sammeln alle in einem Lauf erstellten Alerts und verschicken über den neuen `_send_digest()`-Helper **genau eine** Sammel-Nachricht pro Lauf (Ticker-Liste, bei >8 Tickern „+N weitere", Verweis auf den Früh-Tab für Details) – das begrenzt die Nachrichtenzahl pro Lauf hart auf 1, unabhängig davon ob Fix 1 jede denkbare künftige Ursache für einen Signal-Burst abdeckt (Verteidigung in der Tiefe).
+- **`_detail_line()`** (nur für die alte ausführliche Einzelnachricht gebraucht) entfernt – Signal-Details stehen weiterhin vollständig im Signal-Feed der PWA (`/api/early-signals`), nur nicht mehr in der Telegram-Nachricht.
+- Lokal funktional getestet (simulierter 8er- und 185er-Burst, jeweils genau 1 Telegram-Nachricht, korrekte „+N weitere"-Kürzung), deployed.
+
 ## Backfill des letzten historischen Scans (einmalig, 2026-08-06)
 
 Josef-Wunsch: Datensammlung ein paar Wochen rückwirkend nachholen, um nicht 5-6 Wochen auf erste Ergebnisse warten zu müssen. **Echtes Backfill für den Sentiment-Scan ist NICHT sauber möglich** und wurde deshalb bewusst nicht gebaut:
