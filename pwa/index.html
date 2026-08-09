@@ -693,6 +693,8 @@ tr:last-child td{border-bottom:none}
         <div class="info-section-title">Portfolio-Überwachung</div>
         <p class="info-p">Portfolio-Aktien werden alle 15 Minuten während der NYSE-Börsenzeiten (14:30–21:00 UTC, Mo–Fr) geprüft. Bei echter Stimmungsdrehung (z.&nbsp;B. Bullish ≥ 40 → &lt; 35) kommt ein Telegram-Alert und die Aktie wird rot markiert.</p>
         <p class="info-p">Ein 5-Punkte-Buffer verhindert Flackern — das Sell-Signal löst nur bei echter Trendwende aus, nicht bei kurzfristigen Schwankungen.</p>
+        <p class="info-p"><b>Zusätzliches Verkaufssignal aus Frühsignalen:</b> Nur für echte, bestätigte Positionen (nicht für 👁-Beobachtungen) wird alle paar Minuten während der Börsenzeit zusätzlich geprüft, ob ein Insider-Verkauf oder eine Volumen-Anomalie bei fallendem Kurs vorliegt — löst dieselbe rote Verkaufsempfehlung aus wie eine Stimmungsdrehung.</p>
+        <p class="info-p">Eine 👁-Beobachtung (automatisch angelegt bei einem Frühsignal-Alert) kannst du jederzeit über <b>„Zu echter Position machen"</b> in eine echte Position mit deinen tatsächlichen Kaufdaten (Anzahl, Einstandskurs, optional Datum) umwandeln — erst danach greift auch das Verkaufssignal für diesen Ticker.</p>
       </div>
 
       <!-- Einstellungen -->
@@ -789,11 +791,12 @@ tr:last-child td{border-bottom:none}
         <p class="info-p"><b>Automatische Beobachtung:</b> Jeder Alert-Ticker wird automatisch mit 1 Test-Aktie zum Kurs bei Alert ins Portfolio aufgenommen (Kennzeichnung „👁 Beobachtung"). So siehst du im Portfolio-Tab die Rendite seit dem Signal, ohne selbst tätig werden zu müssen — kein echter Kauf, keine echten Kosten. Abschaltbar über <code>early_signals.auto_watch</code>.</p>
         <p class="info-p">Die aktuellsten Alerts erscheinen zusätzlich oben im <b>Dashboard</b> — unabhängig davon, ob der Ticker die News-Sentiment-Filter erfüllt (das ist ja gerade der Witz: Frühsignale kommen oft, bevor die Presse berichtet).</p>
         <p class="info-p">Die <b>Statistik je Horizont</b> (1/5/20 Handelstage) zeigt Trefferquote und durchschnittliche Rendite aller bisherigen Alerts — automatisch nachgezogen (Forward-Tracker).</p>
+        <p class="info-p"><b>Heutiger Tages-Pick:</b> Statt einzelne Alerts/Scan-Treffer selbst sichten zu müssen, ermittelt das System werktags um 18:05 Uhr (America/New_York) höchstens EINEN Kauf-Kandidaten für den Tag — über beide Systeme (Frühsignale + Sentiment-Scan) hinweg, mit Bestätigung durch mehrere Signale, Veto bei Gegensignalen (z. B. Insider-Verkauf) und Mindest-Qualität. Ein Ticker, der bereits in den letzten Tagen gepickt wurde, wird übersprungen (Repick-Cooldown). Gibt es keinen qualifizierten Kandidaten, wird das ebenfalls kurz gemeldet („Kein Tages-Pick heute") statt zu schweigen. Die Karte oben im Dashboard zeigt die konkreten Rohwerte hinter dem Pick (welcher Insider hat wie viel gekauft, welcher z-Score, welcher Sentiment-Scan-Wert) — <b>keine automatische Kaufempfehlung, nur ein Hinweis für den eigenen Check.</b></p>
         <div class="info-disclaimer">Validierungsphase: Die Hypothese, dass diese Frühindikatoren tatsächlich vorhersagekräftig sind, ist unbewiesen. Erst nach 2–3 Monaten Datenhistorie ist die Statistik belastbar. Kein Investment-Advice.</div>
       </div>
 
       <div class="info-disclaimer">Kein Investment-Advice. Nur Sentiment-Daten aus Medienberichten. Keine Kauf- oder Verkaufsempfehlung.</div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.13 · 2026-07-24</p>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.14 · 2026-08-09</p>
     </div>
   </div>
 </div>
