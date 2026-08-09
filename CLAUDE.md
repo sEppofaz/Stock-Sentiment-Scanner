@@ -324,6 +324,15 @@ Josef-Wunsch: Kosten aus der Tab-Leiste raus, entweder in den Info-Bereich oder 
 - `#tab-costs` (Dollar-Icon, bisher in `.tabs`) wurde 1:1 nach `.hd-actions` verschoben, exakt nach dem `#tab-config`-Präzedenzfall (Zahnrad, seit 2026-07-09): gleiche ID beibehalten (`switchTab()` greift per `document.getElementById('tab-' + name)` darauf zu), `screen-costs`/`loadCosts()` unverändert. Kein JS-Change nötig, nur HTML-Position + CSS-Klassen (`#tab-config,#tab-costs{...}`-Selektoren geteilt).
 - Tab-Leiste hat jetzt nur noch 4 Einträge (Dashboard, Portfolio, Früh, Analyse), Header 3 Icons (Einstellungen, Kosten, Info). Version 1.14 → 1.15.
 
+## Firmeninfo-Button (2026-08-09)
+
+Altes Todo (26.06.): Firmendetails/Bewertungsinfos beim Klick auf einen Ticker im Dashboard. Finnhub Free-Tier liefert keine Freitext-Unternehmensbeschreibung – Josef hat sich bewusst gegen einen zusätzlichen kostenpflichtigen Claude-Call entschieden (Option "nur strukturierte Fakten").
+
+- **scanner.py:** Die bestehende Sektor-Anreicherungsschleife (`/stock/profile2`, läuft seit 2026-08-06 pro Top-N-Ticker) extrahiert jetzt zusätzlich `weburl`/`ipo`/`exchange`/`shareOutstanding`/`country` aus derselben, bereits bezahlten Response – **0 zusätzliche API-Calls**, exakt dasselbe Muster wie die Datensammlungs-Erweiterung vom 6.8.
+- **PWA:** ℹ️-Button neben dem Ticker (Karte + Tabelle) öffnet ein Bottom-Sheet (`#ci-overlay`) mit allen bereits im Client geladenen `_results`-Feldern (Branche, MarketCap, KGV, 52W-Range, Beta, Ø-Volumen, Streubesitz, Aktien gesamt, Börsengang, Börsenplatz, Land, Website) – **kein neuer Fetch**, reines Rendering von schon vorhandenen Daten.
+- **Pitfall Website-Link:** `r.weburl` stammt von Finnhub (extern) – vor dem Rendern als `<a href>` wird das Schema geprüft (`/^https?:\/\//i`), sonst wäre ein `javascript:`-URI theoretisch möglich, falls Finnhub (oder ein MITM) je einen manipulierten Wert zurückgäbe. **Regel:** Externe URL-Strings nie ungeprüft in `href` einsetzen, auch wenn `esc()` bereits Quotes/Tags escaped – das schützt nicht vor dem URI-Schema selbst.
+- **Rollout-Verzögerung:** Die vier neuen Felder erscheinen erst ab dem NÄCHSTEN Vollscan nach dem Deploy in `results.json` – bestehende Einträge zeigen bis dahin nur die schon vorhandenen Felder (Branche/MarketCap/KGV), kein Fehler, nur `null` für die neuen Felder.
+
 ## Tägliche Performance-Analyse mit automatischer Basis-Schwellen-Übernahme (2026-08-09)
 
 Josef-Wunsch: Die Analyse (bisher nur Montag früh) soll regelmäßig – mit einstellbarem Intervall – laufen, bei fundamentalen Erkenntnissen sofort per Telegram melden, und die daraus abgeleiteten Einstellungen automatisch übernehmen ("vollautomatisch", bewusst gewählt trotz Hinweis auf das Risiko bei aktuell noch kleiner Stichprobe).
