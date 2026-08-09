@@ -274,6 +274,41 @@ def _fetch_quote(ticker: str) -> float | None:
         return None
 
 
+def _eur_to_usd_rate(date_str: str | None = None) -> float | None:
+    """EUR→USD-Kurs über Frankfurter.app (EZB-Referenzkurse, kostenlos, kein
+    API-Key) – für die optionale Kaufpreis-Eingabe in Euro (Josef-Wunsch
+    2026-08-09). Nutzt bewusst NICHT Finnhub (kein verlässlicher Free-Tier-
+    Forex-Endpoint bekannt). `date_str` (YYYY-MM-DD) liefert den historischen
+    Kurs des Kaufdatums – an Nicht-Handelstagen (Wochenende) liefert die API
+    automatisch den letzten verfügbaren Vortageskurs (live verifiziert, kein
+    Fehler). Fällt bei fehlendem/zu altem Datum ('not found') oder sonstigem
+    Fehler auf den aktuellen Kurs (/latest) zurück. None nur wenn auch das
+    fehlschlägt (kein stiller Fallback auf einen falschen Kurs – der Aufrufer
+    muss diesen Fall explizit behandeln)."""
+    base_url = "https://api.frankfurter.app"
+    try:
+        path = f"/{date_str}" if date_str else "/latest"
+        r = requests.get(f"{base_url}{path}", params={"from": "EUR", "to": "USD"}, timeout=10)
+        if r.ok:
+            rate = r.json().get("rates", {}).get("USD")
+            if rate:
+                return rate
+    except Exception as e:
+        log.debug("Frankfurter.app (%s): %s", date_str, e)
+
+    if date_str:  # Fallback auf aktuellen Kurs, falls historisches Datum fehlschlug
+        try:
+            r = requests.get(f"{base_url}/latest", params={"from": "EUR", "to": "USD"}, timeout=10)
+            if r.ok:
+                rate = r.json().get("rates", {}).get("USD")
+                if rate:
+                    return rate
+        except Exception as e:
+            log.debug("Frankfurter.app Fallback: %s", e)
+
+    return None
+
+
 def _check_sell_signal(entry: dict, curr: dict) -> tuple[bool, str | None]:
     """Gibt (sell_signal, reason) zurück. True nur wenn Stimmung JETZT gedreht ist."""
     prev = entry.get("last_sentiment")

@@ -414,8 +414,14 @@ tr:last-child td{border-bottom:none}
           <input class="pf-input" id="pf-shares" type="number" min="0" step="1" placeholder="100">
         </div>
         <div class="pf-field">
-          <div class="pf-label">Einstandskurs ($)</div>
-          <input class="pf-input" id="pf-price" type="number" min="0" step="0.01" placeholder="12.50">
+          <div class="pf-label">Einstandskurs</div>
+          <div style="display:flex;gap:6px">
+            <input class="pf-input" id="pf-price" type="number" min="0" step="0.01" placeholder="12.50" style="flex:1">
+            <select class="pf-input" id="pf-currency" style="flex:0 0 64px;padding:0 4px">
+              <option value="USD">$</option>
+              <option value="EUR">€</option>
+            </select>
+          </div>
         </div>
         <div class="pf-field">
           <div class="pf-label">Kaufdatum</div>
@@ -565,6 +571,7 @@ tr:last-child td{border-bottom:none}
     </div>
     <button class="btn-save" onclick="saveConfig()">Speichern</button>
     <div class="save-ok" id="save-ok">✓ Gespeichert</div>
+    <button class="btn-del" style="width:100%;margin-top:16px" onclick="location.href='/sentiment/logout'">Abmelden</button>
   </div>
 
   <!-- Kosten -->
@@ -731,6 +738,7 @@ tr:last-child td{border-bottom:none}
         <p class="info-p">Ein 5-Punkte-Buffer verhindert Flackern — das Sell-Signal löst nur bei echter Trendwende aus, nicht bei kurzfristigen Schwankungen.</p>
         <p class="info-p"><b>Zusätzliches Verkaufssignal aus Frühsignalen:</b> Nur für echte, bestätigte Positionen (nicht für 👁-Beobachtungen) wird alle paar Minuten während der Börsenzeit zusätzlich geprüft, ob ein Insider-Verkauf oder eine Volumen-Anomalie bei fallendem Kurs vorliegt — löst dieselbe rote Verkaufsempfehlung aus wie eine Stimmungsdrehung.</p>
         <p class="info-p">Eine 👁-Beobachtung (automatisch angelegt bei einem Frühsignal-Alert) kannst du jederzeit über <b>„Zu echter Position machen"</b> in eine echte Position mit deinen tatsächlichen Kaufdaten (Anzahl, Einstandskurs, optional Datum) umwandeln — erst danach greift auch das Verkaufssignal für diesen Ticker.</p>
+        <p class="info-p"><b>Einstandskurs in Euro:</b> Sowohl beim manuellen Hinzufügen als auch bei „Zu echter Position machen" kann der Einstandskurs wahlweise in Euro angegeben werden — die App rechnet automatisch zum Wechselkurs des Kaufdatums in USD um (Quelle: EZB-Referenzkurs via Frankfurter.app, kostenlos). Ohne Kaufdatum gilt der aktuelle Kurs. Die Karte zeigt darunter zusätzlich den ursprünglichen Euro-Betrag und den verwendeten Kurs.</p>
       </div>
 
       <!-- Einstellungen -->
@@ -845,7 +853,7 @@ tr:last-child td{border-bottom:none}
       </div>
 
       <div class="info-disclaimer">Kein Investment-Advice. Nur Sentiment-Daten aus Medienberichten. Keine Kauf- oder Verkaufsempfehlung.</div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.17 · 2026-08-09</p>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.18 · 2026-08-09</p>
     </div>
   </div>
 </div>
@@ -1292,6 +1300,7 @@ async function addToPortfolio() {
   const shares = parseFloat(document.getElementById('pf-shares').value);
   const buy_price = parseFloat(document.getElementById('pf-price').value);
   const buy_date = document.getElementById('pf-date').value;
+  const currency = document.getElementById('pf-currency').value;
 
   if (!ticker || !shares || !buy_price) {
     alert('Ticker, Anzahl und Einstandskurs sind Pflichtfelder.');
@@ -1300,16 +1309,21 @@ async function addToPortfolio() {
 
   const r = await fetch('/sentiment/api/portfolio', {
     method: 'POST',
-    body: JSON.stringify({ ticker, name, shares, buy_price, buy_date }),
+    body: JSON.stringify({ ticker, name, shares, buy_price, buy_date, currency }),
   });
   if (r.status === 409) { alert('Ticker bereits im Portfolio.'); return; }
-  if (!r.ok) { alert('Fehler beim Hinzufügen.'); return; }
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    alert(d.error || 'Fehler beim Hinzufügen.');
+    return;
+  }
 
   document.getElementById('pf-ticker').value = '';
   document.getElementById('pf-name').value = '';
   document.getElementById('pf-shares').value = '';
   document.getElementById('pf-price').value = '';
   document.getElementById('pf-date').value = '';
+  document.getElementById('pf-currency').value = 'USD';
 
   loadPortfolio();
   startPolling(); // zeigt Portfolio-Scan-Fortschritt
@@ -1370,6 +1384,7 @@ async function loadPortfolio() {
         <div class="pf-kpi">
           <div class="pf-kpi-label">Einstand</div>
           <div class="pf-kpi-val">$${p.buy_price.toFixed(2)}</div>
+          ${p.buy_price_eur != null ? `<div style="font-size:.72rem;color:var(--muted)">€${p.buy_price_eur.toFixed(2)} @ ${p.fx_rate_used?.toFixed(4) ?? '–'}</div>` : ''}
         </div>
         <div class="pf-kpi">
           <div class="pf-kpi-label">Aktuell</div>
@@ -1423,16 +1438,19 @@ async function convertToReal(ticker) {
   const shares = parseFloat(sharesStr);
   if (!shares || shares <= 0) { alert('Ungültige Anzahl.'); return; }
 
-  const priceStr = prompt(`${ticker}: Zu welchem Kurs (Einstand pro Aktie in $)?`);
+  const currencyStr = (prompt(`${ticker}: Währung des Einstandskurses – "usd" oder "eur"? (leer = usd)`) || 'usd').trim().toLowerCase();
+  const currency = currencyStr === 'eur' ? 'EUR' : 'USD';
+
+  const priceStr = prompt(`${ticker}: Zu welchem Kurs (Einstand pro Aktie in ${currency === 'EUR' ? '€' : '$'})?`);
   if (priceStr === null) return;
   const buy_price = parseFloat(priceStr);
   if (!buy_price || buy_price <= 0) { alert('Ungültiger Kurs.'); return; }
 
-  const buy_date = prompt(`${ticker}: Kaufdatum (YYYY-MM-DD, leer = heute)?`) || undefined;
+  const buy_date = prompt(`${ticker}: Kaufdatum (YYYY-MM-DD, leer = heute)?${currency === 'EUR' ? ' Bestimmt bei €-Eingabe auch den Umrechnungskurs.' : ''}`) || undefined;
 
   const r = await fetch(`/sentiment/api/portfolio/${ticker}/convert`, {
     method: 'PATCH',
-    body: JSON.stringify({ shares, buy_price, buy_date }),
+    body: JSON.stringify({ shares, buy_price, buy_date, currency }),
   });
   if (!r.ok) {
     const d = await r.json().catch(() => ({}));

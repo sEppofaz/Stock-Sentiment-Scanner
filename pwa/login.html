@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#065f46">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Sentiment Scanner – Login</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --primary: #065f46;
+    --primary-dark: #047857;
+    --bg: #f2f2f7;
+    --surface: #fff;
+    --text: #000;
+    --muted: #6e6e73;
+    --border: #e5e5ea;
+    --danger: #dc2626;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --primary: #059669; --primary-dark: #10b981;
+      --bg: #1c1c1e; --surface: #2c2c2e; --text: #fff; --muted: #aeaeb2; --border: #3a3a3c;
+    }
+  }
+  html, body {
+    height: 100%; background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    padding: calc(20px + var(--safe-top)) 20px calc(20px + var(--safe-bottom));
+  }
+  .card {
+    background: var(--surface); border-radius: 20px;
+    padding: 32px 24px; width: 100%; max-width: 360px;
+    box-shadow: 0 4px 24px rgba(0,0,0,.12);
+    display: flex; flex-direction: column; align-items: center; gap: 24px;
+  }
+  .logo {
+    width: 64px; height: 64px; border-radius: 16px;
+    background: var(--primary); display: flex; align-items: center; justify-content: center;
+  }
+  .logo svg { width: 34px; height: 34px; }
+  h1 { font-size: 20px; font-weight: 700; color: var(--text); }
+  form { width: 100%; display: flex; flex-direction: column; gap: 12px; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  label { font-size: 13px; font-weight: 600; color: var(--muted); }
+  input[type="password"] {
+    width: 100%; padding: 12px 14px;
+    border: 1.5px solid var(--border); border-radius: 12px;
+    font-size: 16px; font-family: inherit; background: var(--bg); color: var(--text);
+    outline: none; transition: border-color .15s;
+  }
+  input[type="password"]:focus { border-color: var(--primary); }
+  .error {
+    display: none; font-size: 13px; color: var(--danger);
+    background: #fef2f2; border: 1px solid #fca5a5;
+    padding: 8px 12px; border-radius: 8px; text-align: center;
+  }
+  .error.show { display: block; }
+  button[type="submit"] {
+    width: 100%; padding: 14px;
+    background: var(--primary); color: #fff;
+    border: none; border-radius: 12px;
+    font-size: 16px; font-weight: 600; cursor: pointer;
+    transition: background .15s, transform .1s;
+  }
+  button[type="submit"]:active { background: var(--primary-dark); transform: scale(.98); }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/>
+      <polyline points="16 7 22 7 22 13"/>
+    </svg>
+  </div>
+  <h1>Sentiment Scanner</h1>
+  <form method="post" action="login">
+    <input type="text" name="username" value="josef" autocomplete="username" style="position:absolute;opacity:0;height:0;width:0;pointer-events:none;tabindex:-1">
+    <div class="field">
+      <label for="pw">Passwort</label>
+      <input type="password" id="pw" name="password" autocomplete="current-password"
+             placeholder="••••••••" autofocus required>
+    </div>
+    <div class="error" id="err">Falsches Passwort</div>
+    <button type="submit">Einloggen</button>
+  </form>
+</div>
+<script>
+  if (new URLSearchParams(location.search).get("error")) {
+    document.getElementById("err").classList.add("show");
+    document.getElementById("pw").focus();
+  }
+</script>
+</body>
+</html>

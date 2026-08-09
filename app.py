@@ -1,3 +1,4 @@
+import functools
 import os
 import csv
 import json
@@ -5,14 +6,35 @@ import logging
 import logging.handlers
 import re
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
-from flask import Flask, jsonify, request, send_file, Response
+from flask import Flask, jsonify, redirect, request, send_file, session, Response
 from apscheduler.schedulers.background import BackgroundScheduler
 
 BASE_DIR = Path(__file__).parent
 ICONS_DIR = BASE_DIR / "icons"
+
+# ── Login (Flask-Session, ADR-015) ──────────────────────────────────────────
+# nginx Basic-Auth wurde zuerst versucht und live wieder verworfen: die
+# installierte Home-Bildschirm-PWA zeigte den nativen Basic-Auth-Dialog nicht
+# an (Service Worker fängt die Navigation per fetch() ab, ein 401 löst dabei
+# keinen Browser-Prompt aus – anders als ein direkter Top-Level-Request).
+# Session-Cookies + normale HTTP-Redirects funktionieren dagegen auch
+# innerhalb des Service-Worker-Fetch-Handlers zuverlässig. Exakt das Muster,
+# das Claude Remote bereits nutzt (app.secret_key, HtpasswdFile-Check).
+_SESSION_KEY_FILE = BASE_DIR / ".session_key"
+_HTPASSWD_FILE = "/etc/nginx/sentiment.htpasswd"
+
+
+def _get_or_create_session_key() -> str:
+    if _SESSION_KEY_FILE.exists():
+        return _SESSION_KEY_FILE.read_text().strip()
+    import secrets as _sec
+    key = _sec.token_hex(32)
+    _SESSION_KEY_FILE.write_text(key)
+    _SESSION_KEY_FILE.chmod(0o600)
+    return key
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,6 +50,58 @@ logging.basicConfig(
 log = logging.getLogger("app")
 
 app = Flask(__name__)
+app.secret_key = _get_or_create_session_key()
+app.permanent_session_lifetime = timedelta(days=30)
+
+
+@app.before_request
+def _refresh_session():
+    # Sliding Window: jede Anfrage eines eingeloggten Users verlängert die
+    # Session um weitere 30 Tage (bewusst länger als Claude Remotes 15 Min –
+    # dort geht es um SSH-/Server-Eingriffe, hier nur um Portfolio-Einsicht).
+    if session.get("authenticated"):
+        session.modified = True
+
+
+def _check_password(password: str) -> bool:
+    try:
+        from passlib.apache import HtpasswdFile
+        ht = HtpasswdFile(_HTPASSWD_FILE)
+        users = list(ht.users())
+        if not users:
+            return False
+        return bool(ht.check_password(users[0], password))
+    except Exception:
+        return False
+
+
+def login_required(f):
+    @functools.wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get("authenticated"):
+            return redirect("/sentiment/login")
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.route("/sentiment/login", methods=["GET", "POST"])
+def login():
+    if session.get("authenticated"):
+        return redirect("/sentiment/")
+    if request.method == "POST":
+        if _check_password(request.form.get("password", "")):
+            session.permanent = True
+            session["authenticated"] = True
+            return redirect("/sentiment/")
+        return redirect("/sentiment/login?error=1")
+    return send_file(BASE_DIR / "pwa" / "login.html")
+
+
+@app.route("/sentiment/logout")
+def logout():
+    session.clear()
+    return redirect("/sentiment/login")
+
 
 # ── Icon ─────────────────────────────────────────────────────────────────────
 
@@ -427,6 +501,7 @@ _reschedule()
 # ── PWA-Dateien ───────────────────────────────────────────────────────────────
 
 @app.route("/sentiment/")
+@login_required
 def index():
     return send_file(BASE_DIR / "pwa" / "index.html")
 
@@ -464,6 +539,7 @@ def apple_icon():
 # ── API: Scan ─────────────────────────────────────────────────────────────────
 
 @app.route("/sentiment/api/results")
+@login_required
 def api_results():
     path = BASE_DIR / "results.json"
     if not path.exists():
@@ -472,6 +548,7 @@ def api_results():
 
 
 @app.route("/sentiment/api/scan", methods=["POST"])
+@login_required
 def api_scan_trigger():
     if datetime.utcnow().weekday() >= 5:
         return jsonify({"ok": False, "message": "Kein Scan am Wochenende"}), 409
@@ -483,6 +560,7 @@ def api_scan_trigger():
 
 
 @app.route("/sentiment/api/portfolio/scan", methods=["POST"])
+@login_required
 def api_portfolio_scan_trigger():
     from scanner import SCAN_STATUS
     if SCAN_STATUS.get("running"):
@@ -492,12 +570,14 @@ def api_portfolio_scan_trigger():
 
 
 @app.route("/sentiment/api/scan/status")
+@login_required
 def api_scan_status():
     from scanner import SCAN_STATUS
     return jsonify(SCAN_STATUS)
 
 
 @app.route("/sentiment/api/scan/abort", methods=["POST"])
+@login_required
 def api_scan_abort():
     from scanner import SCAN_STATUS
     if SCAN_STATUS.get("running"):
@@ -509,11 +589,13 @@ def api_scan_abort():
 # ── API: Config ───────────────────────────────────────────────────────────────
 
 @app.route("/sentiment/api/config", methods=["GET"])
+@login_required
 def api_config_get():
     return jsonify(_load_cfg())
 
 
 @app.route("/sentiment/api/config", methods=["POST"])
+@login_required
 def api_config_set():
     cfg = request.get_json(force=True)
     err = _validate_cfg(cfg)
@@ -528,6 +610,7 @@ def api_config_set():
 # ── API: Ticker-Autocomplete ──────────────────────────────────────────────────
 
 @app.route("/sentiment/api/tickers")
+@login_required
 def api_tickers():
     q = request.args.get("q", "").upper().strip()
     if len(q) < 1:
@@ -550,6 +633,7 @@ def api_tickers():
 # ── API: Portfolio ────────────────────────────────────────────────────────────
 
 @app.route("/sentiment/api/portfolio", methods=["GET"])
+@login_required
 def api_portfolio_get():
     return jsonify(_load_portfolio())
 
@@ -558,6 +642,7 @@ _TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
 
 
 @app.route("/sentiment/api/portfolio", methods=["POST"])
+@login_required
 def api_portfolio_add():
     body = request.get_json(force=True)
     ticker = body.get("ticker", "").strip().upper()
@@ -574,12 +659,27 @@ def api_portfolio_add():
     except (TypeError, ValueError):
         return jsonify({"error": "shares/buy_price müssen numerisch sein"}), 400
 
+    buy_date = body.get("buy_date", "")
+    currency = (body.get("currency") or "USD").upper()
+    if currency not in ("USD", "EUR"):
+        return jsonify({"error": "currency muss 'USD' oder 'EUR' sein"}), 400
+    buy_price_eur, fx_rate_used = None, None
+    if currency == "EUR":
+        from scanner import _eur_to_usd_rate
+        fx_rate_used = _eur_to_usd_rate(buy_date or None)
+        if fx_rate_used is None:
+            return jsonify({"error": "EUR/USD-Kurs konnte nicht ermittelt werden – bitte später erneut versuchen oder USD eingeben"}), 400
+        buy_price_eur = buy_price
+        buy_price = round(buy_price * fx_rate_used, 4)
+
     entry = {
         "ticker": ticker,
         "name": body.get("name", ""),
         "shares": shares,
         "buy_price": buy_price,
-        "buy_date": body.get("buy_date", ""),
+        "buy_price_eur": buy_price_eur,
+        "fx_rate_used": fx_rate_used,
+        "buy_date": buy_date,
         "last_sentiment": None,
         "current_price": None,
         "current_value": None,
@@ -615,6 +715,7 @@ def api_portfolio_add():
 
 
 @app.route("/sentiment/api/portfolio/<ticker>", methods=["DELETE"])
+@login_required
 def api_portfolio_delete(ticker: str):
     ticker = ticker.upper()
     from scanner import _update_portfolio
@@ -633,6 +734,7 @@ def api_portfolio_delete(ticker: str):
 
 
 @app.route("/sentiment/api/portfolio/<ticker>", methods=["PATCH"])
+@login_required
 def api_portfolio_update(ticker: str):
     """Sell-Signal manuell zurücksetzen."""
     ticker = ticker.upper()
@@ -658,10 +760,13 @@ def api_portfolio_update(ticker: str):
 
 
 @app.route("/sentiment/api/portfolio/<ticker>/convert", methods=["PATCH"])
+@login_required
 def api_portfolio_convert(ticker: str):
     """Wandelt eine Auto-Watch-Beobachtungsposition (watch:true, 1 Test-Aktie)
     in eine echte, tatsächlich gekaufte Position um (Josef-Wunsch 2026-08-09) –
-    ersetzt die Platzhalterwerte durch die tatsächlichen Kaufdaten."""
+    ersetzt die Platzhalterwerte durch die tatsächlichen Kaufdaten. Optional
+    currency='EUR' (Josef-Wunsch 2026-08-09): buy_price wird dann als
+    EUR-Betrag interpretiert und zum Kurs des Kaufdatums in USD umgerechnet."""
     ticker = ticker.upper()
     body = request.get_json(force=True)
     try:
@@ -673,7 +778,19 @@ def api_portfolio_convert(ticker: str):
         return jsonify({"error": "shares/buy_price müssen größer 0 sein"}), 400
     buy_date = body.get("buy_date")
 
-    from scanner import _update_portfolio
+    currency = (body.get("currency") or "USD").upper()
+    if currency not in ("USD", "EUR"):
+        return jsonify({"error": "currency muss 'USD' oder 'EUR' sein"}), 400
+    buy_price_eur, fx_rate_used = None, None
+    if currency == "EUR":
+        from scanner import _eur_to_usd_rate
+        fx_rate_used = _eur_to_usd_rate(buy_date)
+        if fx_rate_used is None:
+            return jsonify({"error": "EUR/USD-Kurs konnte nicht ermittelt werden – bitte später erneut versuchen oder USD eingeben"}), 400
+        buy_price_eur = buy_price
+        buy_price = round(buy_price * fx_rate_used, 4)
+
+    from scanner import _update_portfolio, _apply_price
     result = {"status": None}
 
     def _conv_mutator(cur):
@@ -685,8 +802,16 @@ def api_portfolio_convert(ticker: str):
                 p["watch"] = False
                 p["shares"] = shares
                 p["buy_price"] = buy_price
+                p["buy_price_eur"] = buy_price_eur
+                p["fx_rate_used"] = fx_rate_used
                 if buy_date:
                     p["buy_date"] = buy_date
+                # Sofortige Neuberechnung mit dem letzten bekannten Kurs, statt bis
+                # zum nächsten 15-Min-Portfolio-Scan falsche Werte (aus dem alten
+                # 1-Aktie-Watch-Zustand) stehen zu lassen (live gefundener Bug,
+                # PRQR-Beispiel 2026-08-09: Positionswert/P&L zeigten noch die
+                # Zahlen von vor der Umwandlung).
+                _apply_price(p, p.get("current_price"))
                 result["status"] = "ok"
                 return cur
         result["status"] = "not_found"
@@ -697,12 +822,22 @@ def api_portfolio_convert(ticker: str):
         return jsonify({"error": "Nicht gefunden"}), 404
     if result["status"] == "not_watch":
         return jsonify({"error": "Ticker ist bereits eine echte Position"}), 400
+
+    # Zusätzlich einen wirklich frischen Kurs nachziehen (Hintergrund, analog
+    # api_portfolio_add()) – _apply_price() oben nutzt nur den letzten bekannten
+    # Watch-Kurs, das kann einige Minuten alt sein.
+    def _refresh():
+        from scanner import run_portfolio_scan
+        run_portfolio_scan()
+    threading.Thread(target=_refresh, daemon=True).start()
+
     return jsonify({"ok": True})
 
 
 # ── API: Layer 6 – Tages-Pick + Verkaufssignal-Check ───────────────────────────
 
 @app.route("/sentiment/api/daily-pick/latest")
+@login_required
 def api_daily_pick_latest():
     from signals_db import get_conn
     with get_conn() as conn:
@@ -717,6 +852,7 @@ def api_daily_pick_latest():
 
 
 @app.route("/sentiment/api/daily-pick/run", methods=["POST"])
+@login_required
 def api_daily_pick_run():
     body = request.get_json(force=True, silent=True) or {}
     force = bool(body.get("force"))
@@ -730,6 +866,7 @@ def api_daily_pick_run():
 
 
 @app.route("/sentiment/api/sell-signal-check/run", methods=["POST"])
+@login_required
 def api_sell_signal_check_run():
     try:
         from layer6_sell_signal import check_frühsignal_sell_exits
@@ -741,6 +878,7 @@ def api_sell_signal_check_run():
 
 
 @app.route("/sentiment/api/costs")
+@login_required
 def api_costs():
     path = BASE_DIR / "claude_costs.json"
     if path.exists():
@@ -759,6 +897,7 @@ def api_costs():
 
 
 @app.route("/sentiment/api/status")
+@login_required
 def api_status():
     jobs = [
         {
@@ -771,6 +910,7 @@ def api_status():
 
 
 @app.route("/sentiment/api/early-signals")
+@login_required
 def api_early_signals():
     from signals_db import get_conn
     with get_conn() as conn:
@@ -789,6 +929,7 @@ def api_early_signals():
 # ── API: Wöchentliche Performance-Analyse ──────────────────────────────────────
 
 @app.route("/sentiment/api/analysis/latest")
+@login_required
 def api_analysis_latest():
     system = request.args.get("system", "")
     if system not in ("sentiment", "early_signals", "cross_signal"):
@@ -801,6 +942,7 @@ def api_analysis_latest():
 
 
 @app.route("/sentiment/api/analysis/run", methods=["POST"])
+@login_required
 def api_analysis_run():
     body = request.get_json(force=True, silent=True) or {}
     system = body.get("system", "")
@@ -816,6 +958,7 @@ def api_analysis_run():
 
 
 @app.route("/sentiment/api/analysis/run-ai", methods=["POST"])
+@login_required
 def api_analysis_run_ai():
     body = request.get_json(force=True, silent=True) or {}
     system = body.get("system", "")
