@@ -280,6 +280,21 @@ tr:last-child td{border-bottom:none}
 .info-list{padding-left:16px;margin-bottom:8px}
 .info-list li{margin-bottom:4px}
 .info-setting{margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--border)}
+
+/* Firmeninfo-Overlay */
+#ci-overlay{display:none;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.4)}
+#ci-overlay.show{display:flex;align-items:flex-end}
+#ci-sheet{background:var(--bg2);border-radius:20px 20px 0 0;width:100%;max-height:70vh;display:flex;flex-direction:column;box-shadow:0 -4px 20px rgba(0,0,0,.15)}
+#ci-sheet-hd{padding:14px 16px 10px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);flex-shrink:0}
+#ci-sheet-hd strong{font-size:1rem}
+#btn-ci-close{background:var(--bg3);border:none;border-radius:16px;padding:5px 14px;font-size:13px;cursor:pointer;color:var(--text)}
+#ci-body{overflow-y:auto;padding:16px 16px calc(20px + env(safe-area-inset-bottom));-webkit-overflow-scrolling:touch;font-size:.9rem}
+.ci-row{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)}
+.ci-row:last-of-type{border-bottom:none}
+.ci-label{color:var(--muted)}
+.ci-val{font-weight:600;text-align:right}
+.ci-website{display:inline-block;margin-top:12px;color:var(--accent2);font-size:.85rem;text-decoration:none;font-weight:600}
+.ci-btn{background:none;border:none;cursor:pointer;font-size:.8rem;padding:0;vertical-align:middle;line-height:1}
 .info-setting:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
 .info-setting-name{font-weight:700;margin-bottom:2px}
 .info-setting-val{font-size:.8rem;color:var(--accent);margin-bottom:4px}
@@ -660,6 +675,17 @@ tr:last-child td{border-bottom:none}
 <button class="back-top" id="back-top" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
 
 <!-- Info-Overlay -->
+<!-- Firmeninfo-Overlay -->
+<div id="ci-overlay" onclick="if(event.target===this)this.classList.remove('show')">
+  <div id="ci-sheet">
+    <div id="ci-sheet-hd">
+      <strong id="ci-title">Firmeninfo</strong>
+      <button id="btn-ci-close" onclick="document.getElementById('ci-overlay').classList.remove('show')">Schließen</button>
+    </div>
+    <div id="ci-body"></div>
+  </div>
+</div>
+
 <div id="info-overlay" onclick="if(event.target===this)this.classList.remove('show')">
   <div id="info-sheet">
     <div id="info-sheet-hd">
@@ -695,6 +721,7 @@ tr:last-child td{border-bottom:none}
         <div class="info-section-title">Score-Berechnung</div>
         <p class="info-p">45 % Bullish-Anteil + 30 % Buzz (normiert: 3 Artikel/Woche = 1,0) + 25 % Sentiment-Score (Claude KI). Optionaler KGV-Bonus wenn 0 &lt; KGV &lt; 30.</p>
         <p class="info-p">Die Top-N Aktien nach Score werden im Dashboard angezeigt — das sind die Aktien mit der stärksten Kombination aus positiver Stimmung, Medienaufmerksamkeit und Keyword-Signal.</p>
+        <p class="info-p"><b>ℹ️-Button neben dem Ticker:</b> Zeigt strukturierte Firmenfakten (Branche, MarketCap, KGV, 52-Wochen-Range, Beta, Ø-Volumen, Streubesitz, Börsengang, Börsenplatz, Land, Website-Link) — stammt aus Finnhub-Daten, die ohnehin beim Scan abgerufen werden, keine zusätzlichen Kosten. Keine Freitext-Beschreibung des Geschäftsmodells (dafür gibt es beim Finnhub Free-Tier keine Datenquelle).</p>
       </div>
 
       <!-- Portfolio -->
@@ -818,7 +845,7 @@ tr:last-child td{border-bottom:none}
       </div>
 
       <div class="info-disclaimer">Kein Investment-Advice. Nur Sentiment-Daten aus Medienberichten. Keine Kauf- oder Verkaufsempfehlung.</div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.16 · 2026-08-09</p>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.17 · 2026-08-09</p>
     </div>
   </div>
 </div>
@@ -1070,7 +1097,7 @@ function renderResults() {
       ${sell ? `<div class="sell-banner">🔴 Verkaufsempfehlung: ${esc(r.sell_reason || 'Sentiment gedreht')}</div>` : ''}
       <div class="rc-header">
         <span class="rc-rank">#${i+1}${pinned?' 📌':''}</span>
-        <span class="rc-ticker">${esc(r.ticker)}</span>
+        <span class="rc-ticker">${esc(r.ticker)} <button class="ci-btn" onclick="event.stopPropagation();showCompanyInfo('${esc(r.ticker)}')" aria-label="Firmeninfo">ℹ️</button></span>
         <span class="rc-score${sell?' sell':''}">${r.score}</span>
       </div>
       <div class="rc-name">${esc(r.name)||'–'}</div>
@@ -1090,7 +1117,7 @@ function renderResults() {
     const rowCls = sell ? 'sell-row' : pinned ? 'pinned-row' : '';
     return `<tr class="${rowCls}">
       <td>${i+1}${pinned?' 📌':''}</td>
-      <td class="td-ticker">${esc(r.ticker)}</td>
+      <td class="td-ticker">${esc(r.ticker)} <button class="ci-btn" onclick="showCompanyInfo('${esc(r.ticker)}')" aria-label="Firmeninfo">ℹ️</button></td>
       <td>${esc(r.name)||'–'}</td>
       <td class="td-score${sell?' sell':''}">${r.score}</td>
       <td>${r.bullish_pct}%</td>
@@ -1099,6 +1126,40 @@ function renderResults() {
       <td>${r.articles_week}</td>
     </tr>`;
   }).join('');
+}
+
+function showCompanyInfo(ticker) {
+  const r = _results.find(x => x.ticker === ticker);
+  if (!r) return;
+  const rows = [];
+  if (r.sector) rows.push(['Branche', esc(r.sector)]);
+  if (r.market_cap) rows.push(['MarketCap', `$${Math.round(r.market_cap / 1e6)}M`]);
+  if (r.pe != null) rows.push(['KGV', typeof r.pe === 'number' ? r.pe.toFixed(1) : esc(r.pe)]);
+  if (r.week52_low != null || r.week52_high != null) {
+    rows.push(['52-Wochen-Range', `$${r.week52_low ?? '–'} – $${r.week52_high ?? '–'}`]);
+  }
+  if (r.beta != null) rows.push(['Beta', r.beta]);
+  if (r.avg_volume_10d != null) rows.push(['Ø Volumen (10T)', `${r.avg_volume_10d.toFixed(2)} Mio. Aktien`]);
+  if (r.float_shares != null) rows.push(['Streubesitz', `${r.float_shares.toFixed(2)} Mio. Aktien`]);
+  if (r.share_outstanding != null) rows.push(['Aktien gesamt', `${r.share_outstanding.toFixed(2)} Mio.`]);
+  if (r.ipo) rows.push(['Börsengang', esc(r.ipo)]);
+  if (r.exchange) rows.push(['Börsenplatz', esc(r.exchange)]);
+  if (r.country) rows.push(['Land', esc(r.country)]);
+
+  const rowsHtml = rows.map(([label, val]) =>
+    `<div class="ci-row"><span class="ci-label">${label}</span><span class="ci-val">${val}</span></div>`
+  ).join('');
+
+  // Nur http(s)-Schemas als Link zulassen (r.weburl stammt von Finnhub, extern/nicht vertrauenswürdig)
+  const website = (r.weburl && /^https?:\/\//i.test(r.weburl)) ? r.weburl : null;
+  const websiteHtml = website
+    ? `<a class="ci-website" href="${esc(website)}" target="_blank" rel="noopener noreferrer">🔗 Website öffnen</a>` : '';
+
+  document.getElementById('ci-title').textContent = `${r.ticker}${r.name ? ' – ' + r.name : ''}`;
+  document.getElementById('ci-body').innerHTML = rows.length
+    ? rowsHtml + websiteHtml
+    : '<div class="es-note">Keine Firmendetails verfügbar (Finnhub-Fehler beim letzten Scan).</div>';
+  document.getElementById('ci-overlay').classList.add('show');
 }
 
 function sortBy(key) {

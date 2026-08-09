@@ -629,10 +629,23 @@ def _run_scan_inner(cfg: dict) -> dict:
                 p = _fh_get("/stock/profile2", {"symbol": r["ticker"]})
                 r["sector"] = p.get("finnhubIndustry")
                 r["float_shares"] = p.get("floatingShare")
+                # Firmeninfo-Feature (Josef-Wunsch 2026-08-09): weitere Felder
+                # aus DERSELBEN, ohnehin schon bezahlten Response – 0 zusätzliche
+                # Calls. Nur strukturierte Fakten (kein Freitext/Claude-Call).
+                r["weburl"] = p.get("weburl") or None
+                r["ipo"] = p.get("ipo") or None
+                r["exchange"] = p.get("exchange") or None
+                r["share_outstanding"] = p.get("shareOutstanding")
+                r["country"] = p.get("country") or None
             except Exception as e:
                 log.debug("%s profile2: %s", r["ticker"], e)
                 r["sector"] = None
                 r["float_shares"] = None
+                r["weburl"] = None
+                r["ipo"] = None
+                r["exchange"] = None
+                r["share_outstanding"] = None
+                r["country"] = None
 
     output = {
         "scanned_at": datetime.utcnow().isoformat() + "Z",
