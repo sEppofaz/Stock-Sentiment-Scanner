@@ -49,6 +49,8 @@ systemctl enable --now sentiment-scanner
 - `CHAT_ID` – Telegram Chat-ID
 - `CLAUDE_API_KEY` – Claude API Key (für Sentiment-Anreicherung der Kandidaten)
 
+**Login (seit 2026-08-09, nicht in secrets.env):** `/etc/nginx/sentiment.htpasswd` (Passwort, von Josef selbst per `htpasswd -c` gesetzt) + `/opt/sentiment-scanner/.session_key` (autogeneriert beim ersten Start, `chmod 600`, gitignored).
+
 ## nginx-Location
 
 Eingetragen in `/etc/nginx/sites-enabled/rename-webhook` unter `umbenennen.duckdns.org`:
@@ -87,6 +89,7 @@ location /sentiment/ {
 ├── fetch_tickers.py    # Finnhub /stock/symbol?exchange=US → tickers.csv (quartalsweise)
 └── pwa/
     ├── index.html      # 4 Tabs: Dashboard, Portfolio, Früh, Analyse (Einstellungen + Kosten als Header-Icons, seit 2026-08-09)
+    ├── login.html      # Flask-Session-Login (seit 2026-08-09, ADR-015), öffentlich erreichbar
     ├── manifest.json
     └── sw.js
 ```
@@ -346,6 +349,33 @@ Josef-Wunsch: Die Analyse (bisher nur Montag früh) soll regelmäßig – mit ei
 - **`config.default.json`:** neuer Key `weekly_analysis.interval_days` (Default 1). **Achtung:** `config.json` ist gitignored – bestehende Installationen (auch die Produktivinstanz) haben den `weekly_analysis`-Block ggf. noch gar nicht (vor 2026-08-06 angelegt); Code fällt in dem Fall überall auf `.get("weekly_analysis", {}).get(key, default)` zurück, funktioniert also auch ohne den Block, zeigt ihn aber erst in `GET /api/config`/der PWA, sobald einmal gespeichert wurde.
 - **KI-Analyse-Button bleibt komplett unabhängig:** `generate_ai_text()` liefert nur interpretierenden Fließtext zum bereits berechneten Report, keine eigenen Zahlen/Vorschläge – fließt nicht in `_apply_suggestions()` ein und wird durch diesen Automatismus weder ausgelöst noch verändert.
 - **PWA:** neues Einstellungen-Feld "Intervall (Tage)" (`weekly_analysis` als expliziter Block in `saveConfig()`, Spread von `_cfg.weekly_analysis` – Pitfall aus 2026-07-07 beachtet, jedes Top-Level-Feld muss beim Payload-Bauen erhalten bleiben), Analyse-Tab-Vorschlagskarten zeigen `✅ Automatisch übernommen: <key> = <wert>` bzw. `skipped_keys`, neue Info-Sheet-Sektion "Performance-Analyse", Version 1.15 → 1.16.
+
+## Login-System: Flask-Session statt nginx Basic-Auth (2026-08-09, ADR-015)
+
+Josef wollte das seit 2026-07-07 offene Todo (K4 aus dem Fable-Review: `GET /api/portfolio` zeigt Kaufpreise/P&L öffentlich, Schreib-Endpoints ungeschützt) endlich schließen. **nginx Basic-Auth wurde zuerst umgesetzt und LIVE wieder verworfen:**
+
+- `auth_basic`/`auth_basic_user_file` in der `location /sentiment/` funktionierte über `curl` und im normalen Browser-Tab einwandfrei (401 ohne Credentials, `WWW-Authenticate`-Header korrekt), aber **die installierte Home-Bildschirm-PWA zeigte gar keinen Login-Dialog** – sofort ein nackter 401-Body. Root Cause: `pwa/sw.js` fängt `document`-Navigationen ab und macht selbst `fetch(e.request)` (network-first). `fetch()` folgt zwar Redirects automatisch, wirft aber bei einer 401-Antwort **keine Exception** – der Service Worker bekommt die 401-Response ganz normal zurück und rendert sie als Seiteninhalt, statt dass der Browser (wie bei einer direkten Top-Level-Navigation) den nativen Basic-Auth-Dialog öffnet. Ein bekanntes Zusammenspiel-Problem zwischen Service-Worker-Fetch-Interception und HTTP Basic-Auth, live verifiziert (nicht nur Theorie).
+- Session-Cookies + normale HTTP-Redirects funktionieren dagegen zuverlässig innerhalb des SW-Fetch-Handlers (ein 302 auf `/login` wird transparent gefolgt, die Login-Seite wird ganz normal als Dokument gerendert) – deshalb jetzt **Flask-Session-Login nach dem bereits bewährten Claude-Remote-Muster** (`Claude-Remote/app.py`): `passlib.apache.HtpasswdFile` gegen dieselbe `/etc/nginx/sentiment.htpasswd` (Josef legt das Passwort selbst per `htpasswd -c` an, landet nie im Chat/Repo), `app.secret_key` aus `.session_key` (autogeneriert, `chmod 600`, gitignored), `@login_required`-Decorator auf **23 Routen** (Index `/sentiment/` + alle `/api/*`) – `manifest.json`/`sw.js`/Icons/`login`/`logout` bewusst **öffentlich** gelassen (keine sensiblen Daten, verhindert dass der SW beim allerersten Cache-Install eine Login-Weiterleitung statt der echten PWA-Shell cached).
+- **Session-Dauer bewusst abweichend von Claude Remote:** 30 Tage Sliding-Window (`app.permanent_session_lifetime`, verlängert sich bei jeder Anfrage über `@app.before_request`) statt Claude Remotes 15 Minuten – dort geht es um SSH-/Server-Eingriffe (hohes Risiko bei gekapertem Cookie), hier nur um Portfolio-Einsicht.
+- `requirements.txt`: `passlib>=1.7` ergänzt, auf dem Server nachinstalliert (`pip install -r requirements.txt`).
+- Neue `pwa/login.html` (App-Farbschema, kein Claude-Remote-Lila), „Abmelden"-Button in den Einstellungen.
+- **Pitfall für künftige Endpoints:** Jeder neue `@app.route()` MUSS manuell `@login_required` bekommen (kein automatischer Schutz wie bei nginx-Location-weitem Basic-Auth) – bei PR-Reviews/neuen Features aktiv gegenchecken.
+
+## Convert-P&L-Bug (2026-08-09)
+
+Screenshot-Fund: `api_portfolio_convert()` ("Zu echter Position machen") setzte `shares`/`buy_price` neu, ließ `current_value`/`pnl`/`pnl_pct` aber unangetastet – bis zum nächsten 15-Min-Portfolio-Scan zeigte die Karte noch die Zahlen aus dem alten 1-Aktie-Beobachtungszustand (Beispiel PRQR: 75 neue Aktien, aber Positionswert/P&L noch von der einen alten Test-Aktie). Fix: `_conv_mutator()` ruft direkt `scanner._apply_price(p, p.get("current_price"))` auf (sofortige Neuberechnung mit dem letzten bekannten Kurs, 0 API-Calls) und stößt zusätzlich einen Hintergrund-`run_portfolio_scan()` an (analog `api_portfolio_add()`) für einen wirklich frischen Kurs. **Bereits vor dem Fix umgewandelte Positionen bleiben falsch, bis entweder der nächste reguläre Scan läuft oder man sie manuell nachzieht** (einmalig für PRQR live per `_apply_price()`-Aufruf über `_update_portfolio()` korrigiert).
+
+## EUR-Kaufpreis-Umrechnung (2026-08-09, ADR-016)
+
+Kaufpreis kann beim manuellen Hinzufügen und bei „Zu echter Position machen" wahlweise in Euro angegeben werden – automatische Umrechnung zum **historischen Kurs des Kaufdatums** (nicht des Eingabedatums) in USD.
+
+- `scanner._eur_to_usd_rate(date_str=None)`: Frankfurter.app (EZB-Referenzkurse, kostenlos, kein API-Key) – bewusst NICHT Finnhub (kein verlässlicher Free-Tier-Forex-Endpoint bekannt). Nicht-Handelstage (Wochenende) liefern automatisch den letzten verfügbaren Vortageskurs (kein Fehler, live verifiziert). Ungültiges/zu altes Datum → `{"message":"not found"}`, fängt ab und fällt auf `/latest` zurück. `None` nur wenn auch das fehlschlägt.
+- `POST /api/portfolio` und `PATCH /api/portfolio/<ticker>/convert` akzeptieren optionales `currency` (Default `"USD"`). Bei `"EUR"`: `buy_price` wird als EUR-Betrag interpretiert, umgerechnet, der intern gespeicherte `buy_price` bleibt immer USD (keine Änderung an der P&L-Logik nötig). Zusätzlich `buy_price_eur`/`fx_rate_used` gespeichert (Transparenz), auf der Portfolio-Karte als Zusatzzeile angezeigt.
+- **Live-Pitfall (eToro-Fund, PRQR-Beispiel):** Broker-Apps wie eToro zeigen den **Stückpreis oft ohne Währungssymbol bereits in der Handelswährung** (USD bei US-Aktien wie PRQR) – nur Summenfelder („Nettowert", „Gewinn") sind in die Kontowährung (€) umgerechnet. Josef hatte „75 Einheiten @ 1.75" als €1,75 gelesen, tatsächlich war es bereits $1,75 – die EUR-Umrechnung hätte daraus fälschlich einen Verlust statt des echten Gewinns gemacht. Live anhand des eToro-Screenshots aufgeklärt (Vorzeichen/Größenordnung von P&L stimmte mit der reinen-USD-Interpretation überein, nicht mit der EUR-Umrechnung). **Hinweistext bei der Währungsauswahl ergänzt** (Hinzufügen-Formular + Convert-Prompt): explizit vor dieser Broker-UI-Falle warnen. Bei künftigen manuellen Korrekturen: im Zweifel nachfragen statt aus einer Zahl ohne Symbol eine Währung zu raten.
+
+## Verkaufsempfehlungen nur für echte Positionen (2026-08-09)
+
+Live-Fund direkt nach dem Login-Rollout: Der **Sentiment-basierte** Verkaufscheck in `_run_portfolio_scan_inner()` lief bisher für ALLE Portfolio-Einträge, inklusive der vielen Auto-Watch-Beobachtungen (`watch:true`). Drehte sich die Stimmung bei mehreren Beobachtungen im selben Scan gleichzeitig, sendete `_send_telegram_sell()` pro Ticker **einzeln** (kein Digest-Muster wie bei `layer4_scoring._send_digest()`) – reale Nachrichtenflut (12 gleichzeitig betroffene Beobachtungen live beobachtet: SAR, ELVA, CLBK, ADVB, IMNN, CBIO, FIEE, DRIO, BWMX, MKTX, ANIK, XHLD). `layer6_sell_signal.py` (Frühsignal-Gegensignale) hatte die `watch=false`-Beschränkung bereits (Josefs frühere Klarstellung „nur für bestätigte Käufe, nicht für alle Empfehlungen") – jetzt konsistent auch für den Sentiment-Check: der komplette Sell-Signal-Block in `_run_portfolio_scan_inner()` steht jetzt unter `if not entry.get("watch"):`. Bereits fälschlich gesetzte `sell_signal`-Flags auf den 12 betroffenen Beobachtungen wurden einmalig live bereinigt.
 
 ## tickers.csv erneuern (quartalsweise)
 
