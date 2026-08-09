@@ -86,7 +86,7 @@ location /sentiment/ {
 ├── requirements.txt
 ├── fetch_tickers.py    # Finnhub /stock/symbol?exchange=US → tickers.csv (quartalsweise)
 └── pwa/
-    ├── index.html      # 5 Tabs: Dashboard, Portfolio, Kosten, Früh, Analyse (Einstellungen als Header-Icon)
+    ├── index.html      # 4 Tabs: Dashboard, Portfolio, Früh, Analyse (Einstellungen + Kosten als Header-Icons, seit 2026-08-09)
     ├── manifest.json
     └── sw.js
 ```
@@ -316,6 +316,13 @@ Fable-Review zur Frühsignal-Logik (auf Josefs Wunsch, nach der Nachrichtenflut 
 - **PWA:** neue "Heutiger Tages-Pick"-Karte oben im Dashboard (vor der Alert-Box), `loadDailyPick()`, zeigt volle Begründung inkl. Rohwerten oder "Kein Tages-Pick"-Hinweis.
 - **Endpoints:** `GET /api/daily-pick/latest`, `POST /api/daily-pick/run` (`force=true` löscht+erneuert die heutige Zeile), `POST /api/sell-signal-check/run`.
 - **Survivorship-Bias bewusst unadressiert:** Layer 6 konsumiert nur, was `tickers.csv`/Layer 1-5 bereits liefern – delistete Ticker fallen aus der Analyse, das strukturelle Problem wird hier nicht gelöst, nur dokumentiert.
+
+## Kosten-Reiter → Header-Icon (2026-08-09)
+
+Josef-Wunsch: Kosten aus der Tab-Leiste raus, entweder in den Info-Bereich oder als eigener Button daneben. Entscheidung nach Rückfrage: eigener Icon-Button im Header (nicht Info-Bereich) – Kosten zeigt Live-Daten (Fortschrittsbalken, KPIs, Scan-Historie), keine statische Erklärung wie der Info-Bereich, ein weiterer Header-Button war daher konsistenter.
+
+- `#tab-costs` (Dollar-Icon, bisher in `.tabs`) wurde 1:1 nach `.hd-actions` verschoben, exakt nach dem `#tab-config`-Präzedenzfall (Zahnrad, seit 2026-07-09): gleiche ID beibehalten (`switchTab()` greift per `document.getElementById('tab-' + name)` darauf zu), `screen-costs`/`loadCosts()` unverändert. Kein JS-Change nötig, nur HTML-Position + CSS-Klassen (`#tab-config,#tab-costs{...}`-Selektoren geteilt).
+- Tab-Leiste hat jetzt nur noch 4 Einträge (Dashboard, Portfolio, Früh, Analyse), Header 3 Icons (Einstellungen, Kosten, Info). Version 1.14 → 1.15.
 
 ## tickers.csv erneuern (quartalsweise)
 
