@@ -785,27 +785,37 @@ def _run_portfolio_scan_inner(portfolio: list[dict]) -> None:
         if sent is None:
             continue
 
-        # Sell-Signal prüfen (nur wenn Signal noch nicht aktiv)
-        if not entry.get("sell_signal"):
-            signal, reason = _check_sell_signal(entry, sent)
-            if signal:
-                entry["sell_signal"] = True
-                entry["sell_reason"] = reason
-                entry["sell_signal_source"] = "sentiment"
-                log.info("SELL-SIGNAL %s: %s", ticker, reason)
-                _send_telegram_sell(entry, sent, price, reason)
-        else:
-            # Signal zurücksetzen wenn Stimmung wieder gut – NUR wenn das
-            # Signal selbst aus der Sentiment-Logik stammt. Ein Frühsignal-
-            # Gegensignal (z.B. Insider-Verkauf, layer6_sell_signal.py) ist
-            # nicht "aufgelöst", nur weil das Sentiment gerade wieder gut
-            # aussieht – sonst würde es hier stillschweigend gelöscht
-            # (Cross-Contamination-Bug, Fable-Review 2026-08-09).
-            if entry.get("sell_signal_source", "sentiment") == "sentiment":
-                if sent["bullish_pct"] >= 40 and sent["bearish_pct"] <= 30:
-                    entry["sell_signal"] = False
-                    entry["sell_reason"] = None
-                    entry["sell_signal_source"] = None
+        # Sell-Signal NUR für echte Positionen (watch=false) – Josef-Wunsch
+        # 2026-08-09: keine Verkaufsempfehlungen für Auto-Watch-Beobachtungen
+        # (kein tatsächlicher Kauf). Vorher liefen ALLE Portfolio-Einträge
+        # durch diesen Check, inkl. der vielen 👁-Beobachtungen – drehte sich
+        # die Stimmung bei mehreren davon im selben Scan gleichzeitig, sendete
+        # _send_telegram_sell() pro Ticker EINZELN (kein Digest wie bei
+        # layer4_scoring._send_digest()), was zu einer Nachrichtenflut führte
+        # (live beobachtet). layer6_sell_signal.py hatte diese Beschränkung
+        # bereits (Josefs frühere Klarstellung "nur für bestätigte Käufe") –
+        # jetzt konsistent auch hier.
+        if not entry.get("watch"):
+            if not entry.get("sell_signal"):
+                signal, reason = _check_sell_signal(entry, sent)
+                if signal:
+                    entry["sell_signal"] = True
+                    entry["sell_reason"] = reason
+                    entry["sell_signal_source"] = "sentiment"
+                    log.info("SELL-SIGNAL %s: %s", ticker, reason)
+                    _send_telegram_sell(entry, sent, price, reason)
+            else:
+                # Signal zurücksetzen wenn Stimmung wieder gut – NUR wenn das
+                # Signal selbst aus der Sentiment-Logik stammt. Ein Frühsignal-
+                # Gegensignal (z.B. Insider-Verkauf, layer6_sell_signal.py) ist
+                # nicht "aufgelöst", nur weil das Sentiment gerade wieder gut
+                # aussieht – sonst würde es hier stillschweigend gelöscht
+                # (Cross-Contamination-Bug, Fable-Review 2026-08-09).
+                if entry.get("sell_signal_source", "sentiment") == "sentiment":
+                    if sent["bullish_pct"] >= 40 and sent["bearish_pct"] <= 30:
+                        entry["sell_signal"] = False
+                        entry["sell_reason"] = None
+                        entry["sell_signal_source"] = None
 
         # last_sentiment aktualisieren (_news_texts/_day_counts nie persistieren)
         entry["last_sentiment"] = {
