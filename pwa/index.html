@@ -1054,10 +1054,36 @@ async function loadDailyPick() {
       ${signals ? `<ul class="pick-list">${signals}</ul>` : ''}
       ${ssTxt}
       <div class="pick-disclaimer">Kein Anlagerat – Validierung läuft.</div>
+      <div class="pf-btns" style="margin-top:10px">
+        <button class="btn-reset-signal" onclick="pickMakeReal('${d.ticker}', ${d.price_at_pick != null ? d.price_at_pick : 'null'})">Position eintragen</button>
+      </div>
     </div>`;
   } catch (e) {
     document.getElementById('dash-pick').style.display = 'none';
   }
+}
+
+async function pickMakeReal(ticker, priceAtPick) {
+  const r = await fetch('/sentiment/api/portfolio');
+  const portfolio = await r.json();
+  const existing = portfolio.find(p => p.ticker === ticker);
+
+  if (existing && !existing.watch) {
+    alert(`${ticker} ist bereits als echte Position im Portfolio.`);
+    return;
+  }
+  if (existing && existing.watch) {
+    switchTab('portfolio');
+    await convertToReal(ticker);
+    return;
+  }
+
+  // Noch nicht im Portfolio: Formular im Portfolio-Tab vorbefüllen, Rest (Stückzahl,
+  // Datum, Währung) muss der Nutzer selbst eintragen – der Pick kennt keine Kaufdaten.
+  switchTab('portfolio');
+  document.getElementById('pf-ticker').value = ticker;
+  if (priceAtPick != null) document.getElementById('pf-price').value = priceAtPick;
+  document.getElementById('pf-shares').focus();
 }
 
 async function loadDashboardEarly() {
@@ -1343,7 +1369,10 @@ async function loadPortfolio() {
   }
   empty.style.display = 'none';
 
-  list.innerHTML = portfolio.map(p => {
+  // Echte Positionen (watch:false) immer vor Beobachtungen (watch:true) – Josef-Feedback 2026-08-14
+  const sorted = [...portfolio].sort((a, b) => (a.watch ? 1 : 0) - (b.watch ? 1 : 0));
+
+  list.innerHTML = sorted.map(p => {
     const sell = p.sell_signal;
     const watch = !!p.watch;
     const price = p.current_price;
