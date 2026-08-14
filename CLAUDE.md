@@ -385,6 +385,16 @@ Josef-Feedback direkt nach dem Owner-Bugfix (s.o.): (1) Nach dem Hinzufügen fan
 - **Sortierung:** `loadPortfolio()` in `pwa/index.html` sortiert die geladene Liste jetzt stabil nach `watch` (`false` vor `true`), bevor sie gerendert wird – echte Positionen stehen immer oben, Reihenfolge innerhalb der beiden Gruppen bleibt wie von der API geliefert.
 - **„Position eintragen"-Button** unter jeder Tagespick-Karte (`pickMakeReal(ticker, price_at_pick)`, `dash-pick-content`): lädt den aktuellen Portfolio-Stand und verzweigt clientseitig – Ticker bereits `watch:true` → ruft den bestehenden `convertToReal()`-Prompt-Dialog (PATCH `.../convert`) auf; bereits `watch:false` → Hinweis „bereits als echte Position vorhanden"; noch nicht im Portfolio → wechselt per `switchTab('portfolio')` in den Portfolio-Tab und befüllt `#pf-ticker`/`#pf-price` vor (Stückzahl/Datum/Währung kennt der Pick nicht, kein Auto-Submit). Kein neuer Endpoint nötig – reine Frontend-Verzweigung auf bereits vorhandenen APIs.
 
+## Tab-Leiste an unteren Bildschirmrand verschoben (2026-08-14, v1.21)
+
+Josef-Wunsch: Tab-Leiste (Dashboard/Portfolio/Früh/Analyse) smartphonegerecht ans untere Bildschirmende, wie bei nativen Apps – Referenz-Implementierung für den neuen PKA-Standard `PKA/BKM/PWA-Standards.md` „Tab-Leiste am unteren Bildschirmrand" (Variante A, feste Tab-Anzahl).
+
+- `<nav class="tabs">` aus dem `<header>` gelöst, jetzt direkt nach `</main>` im DOM, `position:fixed;bottom:0`. Icons in den Tab-Buttons von 14px auf 20px vergrößert (besser lesbar am unteren Rand), Icon jetzt über statt neben dem Label (`flex-direction:column`).
+- `header`: unteres Padding wieder auf `14px` gesetzt (vorher lieferte die eingebettete `.tabs`-Leiste den Abstand).
+- `main`: `padding-bottom` von `32px` auf `72px` (+ safe-area) erhöht, damit Inhalt nicht hinter der fixierten Leiste verschwindet.
+- `.back-top`: `bottom`-Wert von `24px` auf `72px` (+ safe-area) angehoben, sonst Überlappung mit der neuen Tab-Leiste.
+- `switchTab()`/Button-IDs/Onclick-Handler unverändert – reine Positions-/Style-Änderung, keine Logikänderung.
+
 ## tickers.csv erneuern (quartalsweise)
 
 ```bash
