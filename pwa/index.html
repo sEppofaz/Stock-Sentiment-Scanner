@@ -3,8 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#1c1c1e" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f2f2f7" id="theme-color-meta">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Sentiment">
@@ -20,13 +19,20 @@
   --border:#d1d1d6;
 }
 @media (prefers-color-scheme:dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg:#1c1c1e; --bg2:#2c2c2e; --bg3:#3a3a3c;
     --accent:#059669; --accent2:#10b981;
     --text:#ffffff; --muted:#aeaeb2;
     --green:#30d158; --yellow:#ffd60a; --red:#ff453a;
     --border:#48484a;
   }
+}
+:root[data-theme="dark"] {
+  --bg:#1c1c1e; --bg2:#2c2c2e; --bg3:#3a3a3c;
+  --accent:#059669; --accent2:#10b981;
+  --text:#ffffff; --muted:#aeaeb2;
+  --green:#30d158; --yellow:#ffd60a; --red:#ff453a;
+  --border:#48484a;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
@@ -299,7 +305,23 @@ tr:last-child td{border-bottom:none}
 .info-setting-name{font-weight:700;margin-bottom:2px}
 .info-setting-val{font-size:.8rem;color:var(--accent);margin-bottom:4px}
 .info-disclaimer{background:var(--bg3);border-radius:10px;padding:10px 12px;font-size:.82rem;color:var(--muted);margin-top:4px}
+.theme-switch-row{display:flex;align-items:center;justify-content:space-between;margin:16px 0;font-size:.92rem;font-weight:500;color:var(--text)}
+.theme-switch{width:46px;height:26px;border-radius:13px;background:var(--border);border:none;position:relative;padding:0;cursor:pointer;transition:background .2s ease;flex-shrink:0;-webkit-appearance:none}
+.theme-switch[aria-checked="true"]{background:var(--accent)}
+.theme-switch-knob{position:absolute;top:2px;left:2px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .2s ease}
+.theme-switch[aria-checked="true"] .theme-switch-knob{transform:translateX(20px)}
 </style>
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem('sss_theme');
+    if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    var dark = t ? t === 'dark' : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    var meta = document.getElementById('theme-color-meta');
+    if (meta) meta.setAttribute('content', dark ? '#1c1c1e' : '#f2f2f7');
+  } catch (e) {}
+})();
+</script>
 </head>
 <body>
 
@@ -855,7 +877,11 @@ tr:last-child td{border-bottom:none}
       </div>
 
       <div class="info-disclaimer">Kein Investment-Advice. Nur Sentiment-Daten aus Medienberichten. Keine Kauf- oder Verkaufsempfehlung.</div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.21 · 2026-08-14</p>
+      <div class="theme-switch-row">
+        <span>Dunkelmodus</span>
+        <button class="theme-switch" id="theme-toggle" role="switch" aria-checked="false" onclick="toggleTheme()"><span class="theme-switch-knob"></span></button>
+      </div>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.22 · 2026-08-15</p>
     </div>
   </div>
 </div>
@@ -2000,6 +2026,34 @@ async function runAnalysisAI() {
     btn.disabled = false;
   }
 }
+
+// ── Dark-/Hell-Modus-Umschalter ─────────────────────────────────────────────
+function getStoredTheme() {
+  try { return localStorage.getItem('sss_theme'); } catch (e) { return null; }
+}
+function systemPrefersDark() {
+  return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+}
+function applyTheme(theme) {
+  if (theme === 'light' || theme === 'dark') document.documentElement.setAttribute('data-theme', theme);
+  else document.documentElement.removeAttribute('data-theme');
+  const dark = theme === 'light' ? false : theme === 'dark' ? true : systemPrefersDark();
+  const meta = document.getElementById('theme-color-meta');
+  if (meta) meta.setAttribute('content', dark ? '#1c1c1e' : '#f2f2f7');
+}
+function toggleTheme() {
+  const btn = document.getElementById('theme-toggle');
+  const next = btn.getAttribute('aria-checked') === 'true' ? 'light' : 'dark';
+  btn.setAttribute('aria-checked', next === 'dark' ? 'true' : 'false');
+  try { localStorage.setItem('sss_theme', next); } catch (e) {}
+  applyTheme(next);
+}
+(function initThemeToggle() {
+  const btn = document.getElementById('theme-toggle');
+  if (!btn) return;
+  const effective = getStoredTheme() || (systemPrefersDark() ? 'dark' : 'light');
+  btn.setAttribute('aria-checked', effective === 'dark' ? 'true' : 'false');
+})();
 
 // ── Init ──────────────────────────────────────────────────────────────────
 loadResults();
