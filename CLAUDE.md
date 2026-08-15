@@ -121,6 +121,10 @@ Zeitschätzung (Min verbleibend) nur während stufe1 wenn progress > 50 Ticker.
 Zusätzlich zur bestehenden Lifetime-EUR-Schwelle (`_update_claude_costs`, `total_cost_eur`/`scans[]`, unverändert) trackt `costs.py` jetzt parallel ein Tages-Tracking in USD (Session = Kalendertag). Bei 1$/Tag Telegram-Info (läuft weiter), bei 5$/Tag setzt `_claude_enrich_batch()` `SCAN_STATUS["abort"]=True` und bricht die Batch-Schleife selbst ab (bestehender Abort-Skip-Pfad greift danach). `/api/costs` mergt alte+neue Felder. Details: ADR-008, `PKA/BKM/Claude-API-Kosten-Tracking.md`.
 - `costs.py`/`_load()`: bei bereits existierender `claude_costs.json` (hier: das alte EUR/scans-Format) immer `dict.update(raw)` auf einen Default-Dict, nie `return raw` direkt – sonst `KeyError` auf `calls`/`daily` (live aufgetreten beim Rollout, siehe Newsletter-CLAUDE.md für Details).
 
+## Dark-/Hell-Modus-Umschalter (v1.22, 2026-08-15)
+
+Manueller Umschalter im Info-Sheet ergänzt (überschreibt `prefers-color-scheme`), Standard-Pattern aus `PKA/BKM/PWA-Standards.md`. `theme-color`-Meta auf ein Tag konsolidiert, kein SW-Cache-Bump nötig (network-first HTML).
+
 ## Pitfalls
 
 - **`/news-sentiment` ist KEIN Free-Tier-Endpoint** → gibt 403 zurück → stattdessen `/company-news` verwenden
