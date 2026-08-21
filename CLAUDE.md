@@ -430,6 +430,14 @@ Unabhängiger Fable-Review über das gesamte Projekt (Josef-Wunsch, allgemeine S
 
 Alle Fixes lokal syntaxgeprüft, Merge-Fix-Nachbesserung mit synthetischen Daten verifiziert, deployed, nginx-Rate-Limit live gegen die echte URL getestet.
 
+## Median + Trefferquote im Analyse-Tab (2026-08-21, v1.26)
+
+Direkte Konsequenz aus der Performance-Analyse vom selben Tag: der Durchschnitt allein wirkte irreführend positiv (Median Frühsignal-Alerts ~0% vs. Ø +25%, von wenigen Ausreißern verzerrt).
+
+- **`weekly_analysis.py`:** neue Funktion `_overall_stats(rows)` (n, mean_ret_pct, median_ret_pct, hit_rate_pct = Anteil `ret_pct > 0`) – ergänzt in `_analyze_sentiment()`, `_analyze_early_signals()`, `_analyze_cross_signal()` als neues Report-Feld `"overall"`, unabhängig von den bestehenden Pos-/Neg-Schwellenwert-Gruppen (die weiterhin nur den jeweiligen Rand der Verteilung zeigen).
+- **PWA:** neue Kachel `anOverallCard()` oberhalb der Positiv-/Negativ-Karten in beiden Analyse-Ansichten (Standard-Report + Cross-Signal), nutzt die bestehenden `pf-grid`/`pf-kpi`-CSS-Klassen (kein neues CSS nötig).
+- Mit echten Server-Daten verifiziert (n=92 Frühsignal-Alerts: Median −0,04%, Ø +25,08%, Trefferquote 46,7% – deckt sich mit der manuellen Analyse vom selben Tag).
+
 ## tickers.csv erneuern (quartalsweise)
 
 ```bash

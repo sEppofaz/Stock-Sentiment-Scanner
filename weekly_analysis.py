@@ -47,6 +47,24 @@ def _group_stats(rows: list[dict], value_cols: list[str]) -> dict:
     }
 
 
+def _overall_stats(rows: list[dict], ret_key: str = "ret_pct") -> dict:
+    """Median + Trefferquote über ALLE Zeilen (nicht nur die Pos-/Neg-
+    Schwellenwert-Gruppen) – Josef-Feedback 2026-08-21: der Durchschnitt
+    allein wirkt bei dieser Datenlage irreführend positiv, weil wenige
+    extreme Ausreißer ihn nach oben ziehen (Median lag bei Frühsignal-
+    Instant-Alerts bei ca. 0%, obwohl der Durchschnitt +25% zeigte)."""
+    rets = [r[ret_key] for r in rows if r.get(ret_key) is not None]
+    n = len(rets)
+    if not n:
+        return {"n": 0, "mean_ret_pct": None, "median_ret_pct": None, "hit_rate_pct": None}
+    return {
+        "n": n,
+        "mean_ret_pct": _mean(rets),
+        "median_ret_pct": _median(rets),
+        "hit_rate_pct": round(sum(1 for x in rets if x > 0) / n * 100, 1),
+    }
+
+
 def _top_examples(rows: list[dict], key: str, n: int, reverse: bool) -> list[dict]:
     ordered = sorted(rows, key=lambda r: r[key], reverse=reverse)[:n]
     return [{"ticker": r["ticker"], "ret_pct": r[key]} for r in ordered]
@@ -357,6 +375,7 @@ def _analyze_sentiment(cfg: dict) -> dict:
         "thresholds": {"pos": pos_thr, "neg": neg_thr},
         "period_start": min(r["snapshot_ts"] for r in rows)[:10],
         "period_end": max(r["snapshot_ts"] for r in rows)[:10],
+        "overall": _overall_stats(rows),
         "pos_group": _summarize(groups["pos"], "pos"),
         "neg_group": _summarize(groups["neg"], "neg"),
     }
@@ -456,6 +475,7 @@ def _analyze_early_signals(cfg: dict) -> dict:
         "thresholds": {"pos": pos_thr, "neg": neg_thr},
         "period_start": min(r["alert_ts"] for r in alert_rows)[:10],
         "period_end": max(r["alert_ts"] for r in alert_rows)[:10],
+        "overall": _overall_stats(alert_rows),
         "pos_group": _summarize(groups["pos"], "pos"),
         "neg_group": _summarize(groups["neg"], "neg"),
     }
@@ -509,6 +529,7 @@ def _analyze_cross_signal(cfg: dict) -> dict:
         "overlap_days": _CROSS_OVERLAP_DAYS,
         "period_start": min(r["snapshot_ts"] for r in rows)[:10],
         "period_end": max(r["snapshot_ts"] for r in rows)[:10],
+        "overall": _overall_stats(rows),
         "overlap_group": _summarize(overlap),
         "no_overlap_group": _summarize(no_overlap),
     }

@@ -884,6 +884,7 @@ tr:last-child td{border-bottom:none}
       <div class="info-section">
         <div class="info-section-title">Performance-Analyse (Tab „Analyse")</div>
         <p class="info-p">Vergleicht regelmäßig positiv vs. negativ performende Empfehlungen (Kursrendite 20 Handelstage später), getrennt für Sentiment-Scan, Frühsignale und die Überschneidung beider Systeme (Cross-Signal). Zeigt, welche Eigenschaften die beiden Gruppen unterschieden haben.</p>
+        <p class="info-p"><b>Median + Trefferquote:</b> Die „Gesamt"-Kachel oben zeigt zusätzlich zum Durchschnitt den Median (typischer Ausgang) und die Trefferquote (Anteil profitabler Empfehlungen) über die komplette Stichprobe. Bei wenigen, aber extremen Ausreißern kann der Durchschnitt deutlich positiver aussehen als der Median — beide Zahlen zusammen geben ein ehrlicheres Bild als der Durchschnitt allein.</p>
         <p class="info-p"><b>Läuft automatisch</b> im einstellbaren Intervall (Standard täglich, „Intervall (Tage)" in den Einstellungen) nach Börsenschluss, sobald die frischen Kursrenditen des Tages nachgetragen sind. 0 € Kosten – reine SQL-Auswertung, kein Claude-Call.</p>
         <p class="info-p"><b>Automatische Übernahme der Basis-Schwelle:</b> Ergibt sich ein statistisch auffälliger, die bisherige Annahme bestätigender Unterschied (💡 „Schwellenwert-Vorschlag"), wird der vorgeschlagene Zahlenwert automatisch in die passende Basis-Einstellung übernommen (z.&nbsp;B. <code>early_signals.volume_z_min</code>) – erkennbar an der grünen „✅ Automatisch übernommen"-Markierung auf der Vorschlagskarte. Gibt es zu diesem Hebel zusätzlich eine höhere, bewusst separate Schwelle (z.&nbsp;B. die Einzelsignal-Schwelle für Instant-Alerts), bleibt die unangetastet – sonst würde der beabsichtigte Sicherheitsabstand zwischen „Signal zählt überhaupt" und „Signal ist stark genug für einen Soforteinzel-Alert" eingeebnet.</p>
         <p class="info-p"><b>„⚠️ Widerspricht bisheriger Annahme"</b>-Vorschläge werden NIE automatisch übernommen – hier hätte ein einfaches „Schwelle anheben" die falsche Richtung, das bleibt eine reine Information zum selbst Einordnen.</p>
@@ -898,7 +899,7 @@ tr:last-child td{border-bottom:none}
         <span>Dunkelmodus</span>
         <button class="theme-switch" id="theme-toggle" role="switch" aria-checked="false" onclick="toggleTheme()"><span class="theme-switch-knob"></span></button>
       </div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.25 · 2026-08-21 · a sEpp-App</p>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.26 · 2026-08-21 · a sEpp-App</p>
     </div>
   </div>
 </div>
@@ -1982,6 +1983,27 @@ function anFmtStat(stat) {
   return `Ø ${stat.mean}${stat.median != null ? ' · Med ' + stat.median : ''}`;
 }
 
+function anOverallCard(ov) {
+  if (!ov || !ov.n) return '';
+  // Median + Trefferquote zusätzlich zum Durchschnitt (Josef-Feedback
+  // 2026-08-21: Ø allein wirkt bei dieser Datenlage irreführend positiv,
+  // weil wenige extreme Ausreißer ihn nach oben ziehen).
+  return `<div class="pf-grid" style="margin-bottom:14px">
+    <div class="pf-kpi">
+      <div class="pf-kpi-label">Median (n=${ov.n})</div>
+      <div class="pf-kpi-val ${ov.median_ret_pct >= 0 ? 'pos' : 'neg'}">${anFmtPct(ov.median_ret_pct)}</div>
+    </div>
+    <div class="pf-kpi">
+      <div class="pf-kpi-label">Ø (Ausreißer-verzerrt)</div>
+      <div class="pf-kpi-val ${ov.mean_ret_pct >= 0 ? 'pos' : 'neg'}">${anFmtPct(ov.mean_ret_pct)}</div>
+    </div>
+    <div class="pf-kpi" style="grid-column:1/-1">
+      <div class="pf-kpi-label">Trefferquote (Anteil profitabel)</div>
+      <div class="pf-kpi-val">${ov.hit_rate_pct}%</div>
+    </div>
+  </div>`;
+}
+
 function anGroupCard(title, g, system) {
   if (!g || !g.n) {
     return `<div class="es-alert-card"><div class="es-stat-h">${esc(title)}</div><div class="es-empty" style="padding:12px">Keine Daten</div></div>`;
@@ -2097,6 +2119,7 @@ async function loadAnalysis() {
         <div style="font-size:.75rem;color:var(--muted);margin-bottom:10px">
           Zeitraum ${rep.period_start} – ${rep.period_end} · n=${rep.sample_size} · Überlapp-Fenster ±${rep.overlap_days} Tage
         </div>
+        ${anOverallCard(rep.overall)}
         <div class="an-groups">
           ${anCrossCard('Überschneidung (beide Systeme)', rep.overlap_group)}
           ${anCrossCard('Kein Überlapp', rep.no_overlap_group)}
@@ -2116,6 +2139,7 @@ async function loadAnalysis() {
       <div style="font-size:.75rem;color:var(--muted);margin-bottom:10px">
         Zeitraum ${rep.period_start} – ${rep.period_end} · n=${rep.sample_size} · Schwellen ${anFmtPct(rep.thresholds.pos)} / ${anFmtPct(rep.thresholds.neg)}
       </div>
+      ${anOverallCard(rep.overall)}
       <div class="an-groups">
         ${anGroupCard('Positiv', rep.pos_group, _anSystem)}
         ${anGroupCard('Negativ', rep.neg_group, _anSystem)}
