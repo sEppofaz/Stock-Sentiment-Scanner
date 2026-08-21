@@ -38,19 +38,25 @@ def run_scan_tracker(cfg: dict) -> None:
         if closes is None:
             continue
 
+        # Referenzkurs kommt seit 2026-08-21 IMMER frisch aus closes.iloc[0]
+        # dieser (jetzt Split-bereinigten) Abfrage, nie aus einem zuvor
+        # gespeicherten price_at_snapshot - der könnte aus einem älteren,
+        # unbereinigten Tracker-Lauf stammen und wäre dann auf einer anderen
+        # Skala als der frische, bereinigte Horizont-Kurs (derselbe
+        # Split-Bug wie bei forward_tracker.py, siehe dort).
+        baseline = float(closes.iloc[0])
         if price_at_snapshot is None:
-            price_at_snapshot = float(closes.iloc[0])
             with get_conn() as conn:
                 conn.execute(
                     "UPDATE scan_snapshots SET price_at_snapshot=? WHERE id=?",
-                    (price_at_snapshot, snapshot_id))
+                    (baseline, snapshot_id))
 
         for r in rows:
             # Zeile 0 = Snapshot-Tag; Horizont h = h Handelstage danach
             if len(closes) <= r["horizon_days"]:
                 continue
             try:
-                ret = (float(closes.iloc[r["horizon_days"]]) / price_at_snapshot - 1) * 100
+                ret = (float(closes.iloc[r["horizon_days"]]) / baseline - 1) * 100
                 with get_conn() as conn:
                     conn.execute(
                         "UPDATE scan_forward_returns SET ret_pct=?, filled_ts=? "

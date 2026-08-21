@@ -25,16 +25,24 @@ def run_tracker(cfg: dict) -> None:
     filled = 0
     for (ticker, alert_id), rows in by_alert.items():
         alert_ts = rows[0]["alert_ts"]
-        price_at_alert = rows[0]["price_at_alert"]
         closes = fetch_closes(ticker, alert_ts[:10])
         if closes is None:
             continue
+        # Referenzkurs kommt seit 2026-08-21 aus derselben (jetzt Split-
+        # bereinigten) yfinance-Reihe wie der Horizont-Kurs, NICHT mehr aus
+        # der separat gespeicherten Finnhub-Live-Quote (price_at_alert) - die
+        # bleibt unverändert als reine Anzeige-Info erhalten (echter Kurs zum
+        # Alert-Zeitpunkt), wird aber nicht mehr für die Rendite verwendet.
+        # Grund: Ein Split zwischen Alert und Horizont hätte sonst Zähler
+        # (bereinigt) und Nenner (unbereinigt) auf unterschiedliche Skalen
+        # gebracht - derselbe Bug wie bei auto_adjust=False, nur umgekehrt.
+        baseline = float(closes.iloc[0])
         for r in rows:
             # Zeile 0 = Alert-Tag; Horizont h = h Handelstage danach
             if len(closes) <= r["horizon_days"]:
                 continue
             try:
-                ret = (float(closes.iloc[r["horizon_days"]]) / price_at_alert - 1) * 100
+                ret = (float(closes.iloc[r["horizon_days"]]) / baseline - 1) * 100
                 with get_conn() as conn:
                     conn.execute(
                         "UPDATE forward_returns SET ret_pct=?, filled_ts=? "

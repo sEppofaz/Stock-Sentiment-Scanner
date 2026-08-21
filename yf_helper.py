@@ -18,8 +18,15 @@ def fetch_closes(ticker: str, start_date: str):
     (verifiziert 2026-07-06) -> hist["Close"] ist ein DataFrame, kein Series,
     daher hist["Close"][ticker] nötig, sonst crasht float(...)."""
     try:
+        # auto_adjust=True (seit 2026-08-21, live gefunden bei WETO): mit
+        # auto_adjust=False sind Closes vor/nach einem Aktien-Split NICHT auf
+        # derselben Skala - ein Reverse Split (z.B. 1:100) zwischen Referenz-
+        # und Horizont-Tag ließ die Rendite um mehrere tausend Prozent zu hoch
+        # erscheinen (Datenartefakt, keine echte Bewegung). Mit auto_adjust=True
+        # bereinigt yfinance die gesamte zurückgegebene Reihe konsistent auf
+        # dieselbe Split-Basis.
         hist = yf.download(ticker, start=start_date, interval="1d",
-                           progress=False, auto_adjust=False)
+                           progress=False, auto_adjust=True)
         closes = hist["Close"][ticker].dropna()
         if closes.empty:
             log.warning("yf_helper %s: keine Kursdaten ab %s (delistet?)", ticker, start_date)
