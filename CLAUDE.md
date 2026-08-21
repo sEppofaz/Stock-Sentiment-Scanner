@@ -127,6 +127,7 @@ Manueller Umschalter im Info-Sheet ergänzt (überschreibt `prefers-color-scheme
 
 ## Pitfalls
 
+- **⚠️ Flask-Bindung war auf `0.0.0.0` statt `127.0.0.1` (gefunden + gefixt 2026-08-21):** `app.run(host=...)` lauschte auf allen Interfaces statt nur localhost – abweichend vom Muster aller anderen Flask-Apps hier (nginx proxied ohnehin nur gegen `127.0.0.1:5005`, s.o.). War nur durch UFW-Default-Deny auf Port 5005 abgesichert, kein explizites Nginx-only-Pattern. Fix: `host="127.0.0.1"`. Verifiziert: `ss -tlnp` zeigt jetzt `127.0.0.1:5005` statt `0.0.0.0:5005`, direkter externer Zugriff auf Port 5005 schlägt fehl, `/sentiment/` über nginx funktioniert weiterhin. **Läuft weiterhin über Flasks eingebauten Dev-Server** (nicht gunicorn wie die anderen Apps) – bewusst noch nicht migriert, da der eingebaute `apscheduler` (Scans alle 15 Min) bei mehreren gunicorn-Workern mehrfach parallel laufen würde (Duplikate/Mehrkosten) – bräuchte `-w 1` oder Scheduler-Auslagerung, siehe PKA-Todo.
 - **`/news-sentiment` ist KEIN Free-Tier-Endpoint** → gibt 403 zurück → stattdessen `/company-news` verwenden
 - **Sentiment-Quelle:** `/company-news` (7d, Headline + Summary) + Keyword-Scoring (BULLISH_WORDS / BEARISH_WORDS in scanner.py)
 - **Buzz-Definition:** `buzz = Artikelanzahl / 3.0` (3 Artikel/Woche = 1,0 = "normal") – kein Finnhub-Jahresdurchschnitt mehr
