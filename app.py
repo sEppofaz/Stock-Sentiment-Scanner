@@ -172,8 +172,18 @@ def _validate_cfg(cfg) -> str | None:
         return "top_n_results muss numerisch sein"
 
     wa = cfg.get("weekly_analysis", {})
+    if not isinstance(wa, dict):
+        return "weekly_analysis muss ein Objekt sein"
     if "interval_days" in wa and (not isinstance(wa["interval_days"], (int, float)) or wa["interval_days"] < 1):
         return "weekly_analysis.interval_days muss eine Zahl >= 1 sein"
+
+    # early_signals wird hier nur auf den Typ geprüft (nicht auf einzelne
+    # Schlüssel) - _reschedule() greift direkt mit .get("enabled", False)
+    # darauf zu; ein nicht-dict-Wert (z.B. null) würde dort erst NACH
+    # scheduler.remove_all_jobs() crashen und alle Scans lahmlegen, bis der
+    # Service neu gestartet wird (Fable-Review 2026-08-21).
+    if "early_signals" in cfg and not isinstance(cfg["early_signals"], dict):
+        return "early_signals muss ein Objekt sein"
 
     return None
 
@@ -658,6 +668,8 @@ def api_portfolio_add():
         buy_price = float(body.get("buy_price", 0))
     except (TypeError, ValueError):
         return jsonify({"error": "shares/buy_price müssen numerisch sein"}), 400
+    if shares <= 0 or buy_price <= 0:
+        return jsonify({"error": "shares/buy_price müssen größer 0 sein"}), 400
 
     buy_date = body.get("buy_date", "")
     currency = (body.get("currency") or "USD").upper()

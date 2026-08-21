@@ -418,6 +418,18 @@ Josef bat um eine Suche im Portfolio-Tab (viele Einträge, eine bestehende Posit
 - **IMNM einmalig wiederhergestellt** (Josef-Bestaetigung: 11 Aktien, $28.98, Kaufdatum 21.08.2026 – tatsaechlicher eToro-Auftrag) direkt ueber `scanner._update_portfolio()` auf dem Server.
 - **Suche:** Neues Suchfeld ueber der Positionsliste (`#pf-search`, PWA-Standard-Muster mit ✕-Lösch-Button), filtert `loadPortfolio()`/`renderPortfolio()` clientseitig nach Ticker/Name, deckt offene UND geschlossene Positionen ab. Kein neuer Endpoint noetig.
 
+## Fable-Review (2026-08-21, v1.25): 5 Findings, alle gefixt
+
+Unabhängiger Fable-Review über das gesamte Projekt (Josef-Wunsch, allgemeine Sauberkeits-/Sicherheitsprüfung). Alle 5 Findings gegen den echten Code verifiziert, dann gefixt:
+
+- **Merge-Fix-Nachbesserung:** Der am selben Tag gefixte `_merge_portfolio_updates()` (IMNM-Bug) übernahm `current_value`/`pnl`/`pnl_pct` weiterhin blind aus der Scan-Momentaufnahme – wurde eine Position während des Scans konvertiert (shares/buy_price ändern sich), zeigte P&L bis zum nächsten 15-Min-Zyklus die falsche (alte) Stückzahl. Kein Datenverlust mehr wie beim Original-Bug, aber falsche Anzeige. Fix: `_calc_position_value()` neu ausgelagert (aus `_apply_price()`), wird nach dem Merge erneut gegen die aktuellen shares/buy_price angewendet statt den Scan-Wert zu kopieren.
+- **Config-Validierungslücke (potenziell schwerwiegend):** `_validate_cfg()` prüfte `early_signals` gar nicht auf Objekt-Typ – ein `POST /api/config` mit `early_signals: null` wurde unbemerkt akzeptiert und persistiert, crashte dann aber erst in `_reschedule()` NACH `scheduler.remove_all_jobs()` – alle Scans (Vollscan, Portfolio-Scan, Frühsignale) wären bis zum nächsten Service-Neustart komplett gestoppt gewesen. Fix: `_validate_cfg()` prüft jetzt zusätzlich `early_signals`/`weekly_analysis` auf Objekt-Typ, analog zum bestehenden `filter`-Check.
+- **`insider_sell` im Früh-Tab unsichtbar:** `ES_FILTER_TYPES`/`ES_TYPE_LABEL` wurden beim `insider_sell`-Rollout (2026-08-09, Layer 6) nie ergänzt – das Gegensignal steuerte bereits reale Verkaufssignal-Vetos, war im Signal-Feed aber unsichtbar und nicht filterbar. Ergänzt (Label, Filter-Chip, `esFormatDetail()`-Zweig analog `insider_buy`).
+- **Negative Stückzahl/Kurs nicht validiert:** `api_portfolio_add()` prüfte nur auf numerisch, nicht auf `>0` (im Gegensatz zum bereits vorhandenen Check in `api_portfolio_convert()`). Server- und clientseitig ergänzt.
+- **Kein Rate-Limit auf `/sentiment/login`:** Einziger Login-Endpoint ohne Drosselung (im Gegensatz zu Claude-Remote/OrgKompass). Neue nginx-Location `= /sentiment/login` mit der bereits vorhandenen, bisher ungenutzten `auth_zone` (5r/m, burst=3) – live verifiziert (429 ab dem 5. Versuch), restlicher `/sentiment/`-Prefix unverändert ungedrosselt.
+
+Alle Fixes lokal syntaxgeprüft, Merge-Fix-Nachbesserung mit synthetischen Daten verifiziert, deployed, nginx-Rate-Limit live gegen die echte URL getestet.
+
 ## tickers.csv erneuern (quartalsweise)
 
 ```bash

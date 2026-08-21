@@ -188,9 +188,8 @@ def _update_config(mutator_fn):
 
 
 _SCAN_OWNED_FIELDS = {
-    "current_price", "current_value", "pnl", "pnl_pct", "price_stale",
-    "price_updated_at", "last_sentiment", "sell_signal", "sell_reason",
-    "sell_signal_source",
+    "current_price", "price_stale", "price_updated_at", "last_sentiment",
+    "sell_signal", "sell_reason", "sell_signal_source",
 }
 
 
@@ -212,7 +211,17 @@ def _merge_portfolio_updates(computed: list[dict]) -> None:
     Umwandlung ging dadurch spurlos verloren (live gefunden: IMNM,
     2026-08-21, wirkte für Josef wie eine plötzlich verschwundene Position).
     Strukturelle Felder (ticker/shares/buy_price/buy_date/watch/closed/...)
-    kommen jetzt IMMER aus dem aktuellen Dateiinhalt, nie aus dem Scan."""
+    kommen jetzt IMMER aus dem aktuellen Dateiinhalt, nie aus dem Scan.
+
+    current_value/pnl/pnl_pct sind bewusst NICHT in _SCAN_OWNED_FIELDS: sie
+    hängen von shares/buy_price ab, die sich zwischen Scan-Start und
+    Merge-Zeitpunkt geändert haben können (z.B. Konvertierung watch→real
+    während des Scans) – ein blindes Übernehmen des Scan-Werts hätte dann
+    P&L für die ALTE Stückzahl gezeigt, bis zum nächsten 15-Min-Zyklus
+    (Fable-Review 2026-08-21, Nachbesserung zum selben Tag behobenen
+    IMNM-Bug). Stattdessen wird current_value/pnl/pnl_pct nach dem Merge
+    aus dem gemergten current_price + den (garantiert aktuellen) shares/
+    buy_price neu berechnet."""
     updates = {e["ticker"]: e for e in computed}
 
     def _merge(current: list[dict]) -> list[dict]:
@@ -226,6 +235,7 @@ def _merge_portfolio_updates(computed: list[dict]) -> None:
             for field in _SCAN_OWNED_FIELDS:
                 if field in upd:
                     merged[field] = upd[field]
+            _calc_position_value(merged)
             result.append(merged)
         return result
 
@@ -771,18 +781,34 @@ def run_portfolio_scan() -> None:
         })
 
 
+def _calc_position_value(entry: dict) -> None:
+    """Berechnet current_value/pnl/pnl_pct aus current_price + den AKTUELLEN
+    shares/buy_price des Eintrags. Eigene Funktion (statt inline in
+    _apply_price()), damit _merge_portfolio_updates() nach einem Scan dieselbe
+    Formel gegen die zwischenzeitlich ggf. geänderten shares/buy_price erneut
+    anwenden kann (Fable-Review 2026-08-21: sonst blieb current_value/pnl auf
+    Basis der alten Scan-Snapshot-Stückzahl stehen, wenn eine Position
+    waehrend des Scans manuell konvertiert wurde – kein Datenverlust mehr wie
+    beim urspruenglichen IMNM-Bug, aber bis zum naechsten Scan ein falscher
+    P&L-Wert)."""
+    price = entry.get("current_price")
+    if not price:
+        return
+    entry["current_value"] = round(price * entry.get("shares", 0), 2)
+    cost = entry.get("buy_price", 0) * entry.get("shares", 0)
+    entry["pnl"] = round(entry["current_value"] - cost, 2)
+    entry["pnl_pct"] = round((entry["pnl"] / cost * 100) if cost else 0, 2)
+
+
 def _apply_price(entry: dict, price: float | None) -> None:
     """Schreibt Kurs/Positionswert/P&L in den Eintrag; markiert bei Fehlschlag
     als price_stale statt den alten Kurs stillschweigend stehen zu lassen
     (sonst nicht von einem tatsächlich unbewegten Kurs zu unterscheiden)."""
     if price:
         entry["current_price"] = price
-        entry["current_value"] = round(price * entry.get("shares", 0), 2)
-        cost = entry.get("buy_price", 0) * entry.get("shares", 0)
-        entry["pnl"] = round(entry["current_value"] - cost, 2)
-        entry["pnl_pct"] = round((entry["pnl"] / cost * 100) if cost else 0, 2)
         entry["price_stale"] = False
         entry["price_updated_at"] = datetime.utcnow().isoformat() + "Z"
+        _calc_position_value(entry)
     else:
         entry["price_stale"] = True
 

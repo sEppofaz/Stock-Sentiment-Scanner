@@ -898,7 +898,7 @@ tr:last-child td{border-bottom:none}
         <span>Dunkelmodus</span>
         <button class="theme-switch" id="theme-toggle" role="switch" aria-checked="false" onclick="toggleTheme()"><span class="theme-switch-knob"></span></button>
       </div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.24 · 2026-08-21 · a sEpp-App</p>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.25 · 2026-08-21 · a sEpp-App</p>
     </div>
   </div>
 </div>
@@ -1375,6 +1375,10 @@ async function addToPortfolio() {
     alert('Ticker, Anzahl und Einstandskurs sind Pflichtfelder.');
     return;
   }
+  if (shares < 0 || buy_price < 0) {
+    alert('Anzahl und Einstandskurs müssen größer 0 sein.');
+    return;
+  }
 
   const r = await fetch('/sentiment/api/portfolio', {
     method: 'POST',
@@ -1825,11 +1829,12 @@ async function loadCosts() {
 // ── Frühsignale ───────────────────────────────────────────────────────────
 const ES_TYPE_LABEL = {
   insider_buy: 'Insider-Kauf',
+  insider_sell: 'Insider-Verkauf',
   volume_anomaly: 'Volumen-Anomalie',
   buzz_accel: 'Buzz-Beschleunigung',
   large_holder: 'Großaktionär',
 };
-const ES_FILTER_TYPES = ['insider_buy', 'volume_anomaly', 'buzz_accel', 'large_holder'];
+const ES_FILTER_TYPES = ['insider_buy', 'insider_sell', 'volume_anomaly', 'buzz_accel', 'large_holder'];
 let _esActiveFilters = new Set(ES_FILTER_TYPES);
 let _esSignalsCache = [];
 
@@ -1838,6 +1843,11 @@ function esFormatDetail(type, d) {
     const usd = d.total_usd ? `$${Math.round(d.total_usd).toLocaleString('de-AT')}` : '–';
     const shares = d.total_shares ? ` (${Math.round(d.total_shares).toLocaleString('de-AT')} Aktien)` : '';
     return `${esc(d.owner)||'–'} kauft ${usd}${shares}${d.cluster ? ' · mehrere Insider (Cluster)' : ''}`;
+  }
+  if (type === 'insider_sell') {
+    const usd = d.total_usd ? `$${Math.round(d.total_usd).toLocaleString('de-AT')}` : '–';
+    const shares = d.total_shares ? ` (${Math.round(d.total_shares).toLocaleString('de-AT')} Aktien)` : '';
+    return `${esc(d.owner)||'–'} verkauft ${usd}${shares}${d.cluster ? ' · mehrere Insider (Cluster)' : ''}`;
   }
   if (type === 'volume_anomaly') {
     const vol = d.volume != null ? Math.round(d.volume).toLocaleString('de-AT') : '–';
