@@ -438,6 +438,15 @@ Direkte Konsequenz aus der Performance-Analyse vom selben Tag: der Durchschnitt 
 - **PWA:** neue Kachel `anOverallCard()` oberhalb der Positiv-/Negativ-Karten in beiden Analyse-Ansichten (Standard-Report + Cross-Signal), nutzt die bestehenden `pf-grid`/`pf-kpi`-CSS-Klassen (kein neues CSS nötig).
 - Mit echten Server-Daten verifiziert (n=92 Frühsignal-Alerts: Median −0,04%, Ø +25,08%, Trefferquote 46,7% – deckt sich mit der manuellen Analyse vom selben Tag).
 
+## Split-bereinigte Renditeberechnung + Rückwirkende Neuberechnung (2026-08-21, v1.27, ADR-019)
+
+`yf_helper.fetch_closes()` nutzte `auto_adjust=False` – ein Aktien-Split (v.a. Reverse Splits bei Sub-$1-Aktien) zwischen Referenz-Tag und Horizont-Tag ließ Renditen um mehrere tausend Prozent zu hoch erscheinen (live gefunden: WETO zeigte „+7.322%", tatsächlich Reverse Split 1:100 am 03.08.2026, korrigierter Wert: **−25,78%**). Details/Begründung: `ADR-019`.
+
+- **Fix (künftig):** `auto_adjust=True` + Referenzkurs immer aus derselben frisch abgerufenen, bereinigten Kursreihe (`forward_tracker.py`/`scan_tracker.py`), nicht mehr aus externer Finnhub-Quote/altem gespeicherten Wert gemischt.
+- **Rückwirkend neu berechnet** (`backfill_split_adjusted_returns.py`, einmalig ausgeführt): 1187 `forward_returns` + 5592 `scan_forward_returns`-Werte neu berechnet, 65 davon mit Abweichung ≥20 Prozentpunkte (echte Split-Kontamination).
+- **Ergebnis nach Korrektur (deutlich ehrlicher als vorher):** Sentiment-Scan-Empfehlungen: Median **−13,46%**, Trefferquote nur **31,7%** (n=60) – vorher wirkte das durch die Datenfehler positiver. Frühsignal-Alerts: Median **0,0%**, Ø **+0,44%** (vorher fälschlich Ø +25%), Trefferquote 47,8% (n=92) – im Wesentlichen Münzwurf-Niveau.
+- Frisch mit `analyze_and_store()` pro System verifiziert (nicht über `run_weekly_analysis()`, um den Telegram-Alert für „neue Erkenntnisse" nicht versehentlich als Nebeneffekt der Verifikation auszulösen).
+
 ## tickers.csv erneuern (quartalsweise)
 
 ```bash
