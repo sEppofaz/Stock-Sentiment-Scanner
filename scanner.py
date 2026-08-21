@@ -187,6 +187,13 @@ def _update_config(mutator_fn):
                 fcntl.flock(f, fcntl.LOCK_UN)
 
 
+_SCAN_OWNED_FIELDS = {
+    "current_price", "current_value", "pnl", "pnl_pct", "price_stale",
+    "price_updated_at", "last_sentiment", "sell_signal", "sell_reason",
+    "sell_signal_source",
+}
+
+
 def _merge_portfolio_updates(computed: list[dict]) -> None:
     """Wendet die während eines (potenziell mehrere Minuten laufenden)
     Portfolio-Scans berechneten Updates auf den zum Speicherzeitpunkt
@@ -194,12 +201,33 @@ def _merge_portfolio_updates(computed: list[dict]) -> None:
     inzwischen veraltete) Liste blind zu überschreiben. Ticker, die
     zwischenzeitlich von einem anderen Prozess gelöscht wurden, bleiben
     gelöscht; Ticker, die zwischenzeitlich neu hinzugekommen sind (z.B.
-    _auto_watch() aus einem Frühsignal-Alert), bleiben erhalten – nur die
-    hier berechneten Felder für die VERARBEITETEN Ticker werden übernommen."""
+    _auto_watch() aus einem Frühsignal-Alert), bleiben erhalten.
+
+    Nur die in _SCAN_OWNED_FIELDS gelisteten, vom Scan tatsächlich
+    berechneten Felder werden übernommen – NICHT der ganze Eintrag. Vorher
+    wurde der komplette Eintrag durch die Scan-Momentaufnahme ersetzt: wenn
+    Josef währenddessen z.B. eine Beobachtung manuell in eine echte Position
+    umwandelte (watch/shares/buy_price ändern sich), überschrieb der Scan
+    das mit seinem veralteten, noch unkonvertierten Snapshot – die
+    Umwandlung ging dadurch spurlos verloren (live gefunden: IMNM,
+    2026-08-21, wirkte für Josef wie eine plötzlich verschwundene Position).
+    Strukturelle Felder (ticker/shares/buy_price/buy_date/watch/closed/...)
+    kommen jetzt IMMER aus dem aktuellen Dateiinhalt, nie aus dem Scan."""
     updates = {e["ticker"]: e for e in computed}
 
     def _merge(current: list[dict]) -> list[dict]:
-        return [updates.get(e["ticker"], e) for e in current]
+        result = []
+        for entry in current:
+            upd = updates.get(entry["ticker"])
+            if upd is None:
+                result.append(entry)
+                continue
+            merged = dict(entry)
+            for field in _SCAN_OWNED_FIELDS:
+                if field in upd:
+                    merged[field] = upd[field]
+            result.append(merged)
+        return result
 
     _update_portfolio(_merge)
 

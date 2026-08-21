@@ -163,6 +163,12 @@ tr:last-child td{border-bottom:none}
 .btn-reset-signal{flex:1;padding:8px;background:var(--bg3);color:var(--text);border:none;border-radius:9px;font-size:.8rem;cursor:pointer}
 .btn-del{padding:8px 14px;background:var(--red);color:#fff;border:none;border-radius:9px;font-size:.8rem;font-weight:600;cursor:pointer}
 #pf-empty{text-align:center;padding:32px 16px;color:var(--muted);font-size:.9rem}
+.search-wrap{position:relative;flex:1;display:flex;min-width:0;margin-bottom:12px}
+#pf-search{flex:1;padding:9px 34px 9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg2);color:var(--text);font-size:.9rem}
+#pf-search::-webkit-search-cancel-button{-webkit-appearance:none}
+#pf-search-clear{display:none;position:absolute;right:6px;top:50%;transform:translateY(-50%);width:24px;height:24px;align-items:center;justify-content:center;border:none;border-radius:50%;background:var(--bg3);color:var(--muted);font-size:14px;line-height:1;cursor:pointer;padding:0}
+#pf-search-clear:active{background:var(--border)}
+#pf-search-empty{text-align:center;padding:24px 16px;color:var(--muted);font-size:.9rem;display:none}
 
 /* Config */
 .cfg-section{background:var(--bg2);border-radius:14px;padding:14px;margin-bottom:14px}
@@ -441,8 +447,13 @@ tr:last-child td{border-bottom:none}
         Jetzt aktualisieren
       </button>
     </div>
+    <div class="search-wrap">
+      <input type="search" id="pf-search" placeholder="Position suchen (Ticker oder Name)…" oninput="onPfSearch()">
+      <button id="pf-search-clear" type="button" onclick="clearPfSearch()" aria-label="Suche löschen">✕</button>
+    </div>
     <div id="pf-list"></div>
     <div id="pf-empty" style="display:none">Noch keine Aktien im Portfolio.</div>
+    <div id="pf-search-empty">Keine Position gefunden.</div>
     <div id="pf-closed-section" style="display:none;margin-top:20px">
       <div class="section-title">📁 Geschlossene Positionen</div>
       <div id="pf-closed-list"></div>
@@ -768,6 +779,7 @@ tr:last-child td{border-bottom:none}
         <p class="info-p">Eine 👁-Beobachtung (automatisch angelegt bei einem Frühsignal-Alert) kannst du jederzeit über <b>„Zu echter Position machen"</b> in eine echte Position mit deinen tatsächlichen Kaufdaten (Anzahl, Einstandskurs, optional Datum) umwandeln — erst danach greift auch das Verkaufssignal für diesen Ticker.</p>
         <p class="info-p"><b>Einstandskurs in Euro:</b> Sowohl beim manuellen Hinzufügen als auch bei „Zu echter Position machen" kann der Einstandskurs wahlweise in Euro angegeben werden — die App rechnet automatisch zum Wechselkurs des Kaufdatums in USD um (Quelle: EZB-Referenzkurs via Frankfurter.app, kostenlos). Ohne Kaufdatum gilt der aktuelle Kurs. Die Karte zeigt darunter zusätzlich den ursprünglichen Euro-Betrag und den verwendeten Kurs.</p>
         <p class="info-p"><b>Position schließen</b> (nur für echte Positionen): Anders als „Löschen" entfernt „Schließen" die Position nicht aus der App, sondern verschiebt sie in die eigene Rubrik „Geschlossene Positionen" — mit Einstand, Schlusskurs/-datum (letzter bekannter Live-Kurs zum Zeitpunkt des Schließens) und realisiertem Gewinn/Verlust. Eine geschlossene Position wird nicht mehr live gescannt. „Löschen" bleibt zusätzlich verfügbar, wenn eine Position endgültig aus der Historie entfernt werden soll.</p>
+        <p class="info-p"><b>Suche im Portfolio-Tab:</b> Über das Suchfeld oberhalb der Positionsliste lässt sich nach Ticker oder Firmenname filtern — hilfreich bei vielen Einträgen (v.a. Auto-Watch-Beobachtungen), um eine bereits vorhandene Position wiederzufinden, z.B. bevor man sie über „Zu echter Position machen" umwandelt.</p>
       </div>
 
       <!-- Einstellungen -->
@@ -886,7 +898,7 @@ tr:last-child td{border-bottom:none}
         <span>Dunkelmodus</span>
         <button class="theme-switch" id="theme-toggle" role="switch" aria-checked="false" onclick="toggleTheme()"><span class="theme-switch-knob"></span></button>
       </div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.23 · 2026-08-21 · a sEpp-App</p>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.24 · 2026-08-21 · a sEpp-App</p>
     </div>
   </div>
 </div>
@@ -1305,6 +1317,7 @@ async function triggerPortfolioScan() {
 
 // ── Portfolio ─────────────────────────────────────────────────────────────
 let _acResults = [], _acIdx = -1;
+let _pfRaw = [];
 
 async function acQuery(q) {
   const list = document.getElementById('pf-ac-list');
@@ -1409,11 +1422,39 @@ async function addToPortfolio() {
 
 async function loadPortfolio() {
   const r = await fetch('/sentiment/api/portfolio');
-  const all = await r.json();
+  _pfRaw = await r.json();
+  renderPortfolio();
+}
+
+function onPfSearch() {
+  document.getElementById('pf-search-clear').style.display =
+    document.getElementById('pf-search').value ? 'flex' : 'none';
+  renderPortfolio();
+}
+
+function clearPfSearch() {
+  const input = document.getElementById('pf-search');
+  input.value = '';
+  document.getElementById('pf-search-clear').style.display = 'none';
+  renderPortfolio();
+  input.focus();
+}
+
+function renderPortfolio() {
   const list = document.getElementById('pf-list');
   const empty = document.getElementById('pf-empty');
+  const searchEmpty = document.getElementById('pf-search-empty');
   const closedSection = document.getElementById('pf-closed-section');
   const closedList = document.getElementById('pf-closed-list');
+
+  // Suche über Ticker + Name, deckt offene UND geschlossene Positionen ab –
+  // Josef-Wunsch 2026-08-21: bei vielen Einträgen (Auto-Watch-Beobachtungen
+  // + echte Positionen) findet man eine bestimmte Position sonst nicht
+  // wieder, obwohl "Ticker bereits im Portfolio" gemeldet wird.
+  const q = (document.getElementById('pf-search')?.value || '').trim().toLowerCase();
+  const all = q
+    ? _pfRaw.filter(p => p.ticker.toLowerCase().includes(q) || (p.name || '').toLowerCase().includes(q))
+    : _pfRaw;
 
   // Geschlossene Positionen (eigene Rubrik, Josef-Wunsch 2026-08-21 – Vorbild
   // eToro "Geschichte des Trades": bleiben sichtbar statt wie bei "Löschen"
@@ -1423,9 +1464,11 @@ async function loadPortfolio() {
 
   if (!portfolio.length) {
     list.innerHTML = '';
-    empty.style.display = 'block';
+    empty.style.display = (!q && !_pfRaw.length) ? 'block' : 'none';
+    searchEmpty.style.display = (q && !all.length) ? 'block' : 'none';
   } else {
     empty.style.display = 'none';
+    searchEmpty.style.display = 'none';
   }
 
   if (closed.length) {
