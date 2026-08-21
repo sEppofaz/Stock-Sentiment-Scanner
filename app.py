@@ -736,14 +736,17 @@ def api_portfolio_delete(ticker: str):
 @app.route("/sentiment/api/portfolio/<ticker>", methods=["PATCH"])
 @login_required
 def api_portfolio_update(ticker: str):
-    """Sell-Signal manuell zurücksetzen."""
+    """Sell-Signal manuell zurücksetzen oder Position schließen (Josef-Wunsch
+    2026-08-21: geschlossene Positionen bleiben zur Beobachtung erhalten,
+    statt wie bei "Löschen" endgültig aus der Historie zu verschwinden –
+    Vorbild eToro "Geschichte des Trades")."""
     ticker = ticker.upper()
     body = request.get_json(force=True)
     from scanner import _update_portfolio
-    found = False
+    found, not_closable = False, False
 
     def _upd_mutator(cur):
-        nonlocal found
+        nonlocal found, not_closable
         for p in cur:
             if p["ticker"] == ticker:
                 found = True
@@ -751,11 +754,29 @@ def api_portfolio_update(ticker: str):
                     p["sell_signal"] = bool(body["sell_signal"])
                     p["sell_reason"] = None
                     p["sell_signal_source"] = None
+                if body.get("closed") is True:
+                    if p.get("watch") or p.get("closed"):
+                        not_closable = True
+                        continue
+                    close_price = p.get("current_price")
+                    p["closed"] = True
+                    p["close_price"] = close_price
+                    p["close_date"] = datetime.utcnow().date().isoformat()
+                    if close_price is not None:
+                        cost = p.get("buy_price", 0) * p.get("shares", 0)
+                        realized = close_price * p.get("shares", 0) - cost
+                        p["realized_pnl"] = round(realized, 2)
+                        p["realized_pnl_pct"] = round((realized / cost * 100) if cost else 0, 2)
+                    else:
+                        p["realized_pnl"] = None
+                        p["realized_pnl_pct"] = None
         return cur
 
     _update_portfolio(_upd_mutator)
     if not found:
         return jsonify({"error": "Nicht gefunden"}), 404
+    if not_closable:
+        return jsonify({"error": "Position kann nicht geschlossen werden (Beobachtung oder bereits geschlossen)"}), 400
     return jsonify({"ok": True})
 
 

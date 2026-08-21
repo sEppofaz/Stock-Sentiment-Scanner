@@ -39,7 +39,8 @@ def check_frühsignal_sell_exits(cfg: dict) -> None:
     from scanner import _load_portfolio, _update_portfolio, _fetch_quote, _tg_post
 
     portfolio = _load_portfolio()
-    real_positions = [p for p in portfolio if not p.get("watch") and not p.get("sell_signal")]
+    real_positions = [p for p in portfolio
+                       if not p.get("watch") and not p.get("sell_signal") and not p.get("closed")]
     if not real_positions:
         return
 

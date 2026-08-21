@@ -443,6 +443,10 @@ tr:last-child td{border-bottom:none}
     </div>
     <div id="pf-list"></div>
     <div id="pf-empty" style="display:none">Noch keine Aktien im Portfolio.</div>
+    <div id="pf-closed-section" style="display:none;margin-top:20px">
+      <div class="section-title">📁 Geschlossene Positionen</div>
+      <div id="pf-closed-list"></div>
+    </div>
   </div>
 
   <!-- Einstellungen -->
@@ -763,6 +767,7 @@ tr:last-child td{border-bottom:none}
         <p class="info-p"><b>Zusätzliches Verkaufssignal aus Frühsignalen:</b> Nur für echte, bestätigte Positionen (nicht für 👁-Beobachtungen) wird alle paar Minuten während der Börsenzeit zusätzlich geprüft, ob ein Insider-Verkauf oder eine Volumen-Anomalie bei fallendem Kurs vorliegt — löst dieselbe rote Verkaufsempfehlung aus wie eine Stimmungsdrehung.</p>
         <p class="info-p">Eine 👁-Beobachtung (automatisch angelegt bei einem Frühsignal-Alert) kannst du jederzeit über <b>„Zu echter Position machen"</b> in eine echte Position mit deinen tatsächlichen Kaufdaten (Anzahl, Einstandskurs, optional Datum) umwandeln — erst danach greift auch das Verkaufssignal für diesen Ticker.</p>
         <p class="info-p"><b>Einstandskurs in Euro:</b> Sowohl beim manuellen Hinzufügen als auch bei „Zu echter Position machen" kann der Einstandskurs wahlweise in Euro angegeben werden — die App rechnet automatisch zum Wechselkurs des Kaufdatums in USD um (Quelle: EZB-Referenzkurs via Frankfurter.app, kostenlos). Ohne Kaufdatum gilt der aktuelle Kurs. Die Karte zeigt darunter zusätzlich den ursprünglichen Euro-Betrag und den verwendeten Kurs.</p>
+        <p class="info-p"><b>Position schließen</b> (nur für echte Positionen): Anders als „Löschen" entfernt „Schließen" die Position nicht aus der App, sondern verschiebt sie in die eigene Rubrik „Geschlossene Positionen" — mit Einstand, Schlusskurs/-datum (letzter bekannter Live-Kurs zum Zeitpunkt des Schließens) und realisiertem Gewinn/Verlust. Eine geschlossene Position wird nicht mehr live gescannt. „Löschen" bleibt zusätzlich verfügbar, wenn eine Position endgültig aus der Historie entfernt werden soll.</p>
       </div>
 
       <!-- Einstellungen -->
@@ -881,7 +886,7 @@ tr:last-child td{border-bottom:none}
         <span>Dunkelmodus</span>
         <button class="theme-switch" id="theme-toggle" role="switch" aria-checked="false" onclick="toggleTheme()"><span class="theme-switch-knob"></span></button>
       </div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.22 · 2026-08-15</p>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.23 · 2026-08-21 · a sEpp-App</p>
     </div>
   </div>
 </div>
@@ -1099,14 +1104,11 @@ async function pickMakeReal(ticker, priceAtPick) {
     alert(`${ticker} ist bereits als echte Position im Portfolio.`);
     return;
   }
-  if (existing && existing.watch) {
-    switchTab('portfolio');
-    await convertToReal(ticker);
-    return;
-  }
 
-  // Noch nicht im Portfolio: Formular im Portfolio-Tab vorbefüllen, Rest (Stückzahl,
-  // Datum, Währung) muss der Nutzer selbst eintragen – der Pick kennt keine Kaufdaten.
+  // Sowohl "noch nicht im Portfolio" als auch "bereits als Auto-Watch-Beobachtung
+  // drin" laufen über dasselbe Formular im Portfolio-Tab – addToPortfolio()
+  // erkennt bei 409 selbst, ob es sich um eine Umwandlung handelt (Josef-Wunsch
+  // 2026-08-21: immer die schöne Eingabemaske statt der alten prompt()-Kette).
   switchTab('portfolio');
   document.getElementById('pf-ticker').value = ticker;
   if (priceAtPick != null) document.getElementById('pf-price').value = priceAtPick;
@@ -1365,8 +1367,29 @@ async function addToPortfolio() {
     method: 'POST',
     body: JSON.stringify({ ticker, name, shares, buy_price, buy_date, currency }),
   });
-  if (r.status === 409) { alert('Ticker bereits im Portfolio.'); return; }
-  if (!r.ok) {
+  if (r.status === 409) {
+    // Ticker existiert schon – meist eine Auto-Watch-Beobachtung (z.B. vom
+    // Tages-Pick). In dem Fall dieselben Formulardaten zum Umwandeln in eine
+    // echte Position nutzen, statt einer Sackgassen-Fehlermeldung (Josef-Wunsch
+    // 2026-08-21: immer über dieses Formular, nie über die alte prompt()-Kette).
+    const pr = await fetch('/sentiment/api/portfolio');
+    const portfolio = await pr.json();
+    const existing = portfolio.find(p => p.ticker === ticker);
+    if (existing && existing.watch) {
+      const cr = await fetch(`/sentiment/api/portfolio/${ticker}/convert`, {
+        method: 'PATCH',
+        body: JSON.stringify({ shares, buy_price, buy_date, currency }),
+      });
+      if (!cr.ok) {
+        const d = await cr.json().catch(() => ({}));
+        alert(d.error || 'Umwandeln fehlgeschlagen.');
+        return;
+      }
+    } else {
+      alert('Ticker bereits im Portfolio.');
+      return;
+    }
+  } else if (!r.ok) {
     const d = await r.json().catch(() => ({}));
     alert(d.error || 'Fehler beim Hinzufügen.');
     return;
@@ -1380,21 +1403,86 @@ async function addToPortfolio() {
   document.getElementById('pf-currency').value = 'USD';
 
   loadPortfolio();
+  loadDailyPick(); // Tages-Pick-Card auf Dashboard aktualisieren (zeigte sonst weiter "Position eintragen")
   startPolling(); // zeigt Portfolio-Scan-Fortschritt
 }
 
 async function loadPortfolio() {
   const r = await fetch('/sentiment/api/portfolio');
-  const portfolio = await r.json();
+  const all = await r.json();
   const list = document.getElementById('pf-list');
   const empty = document.getElementById('pf-empty');
+  const closedSection = document.getElementById('pf-closed-section');
+  const closedList = document.getElementById('pf-closed-list');
+
+  // Geschlossene Positionen (eigene Rubrik, Josef-Wunsch 2026-08-21 – Vorbild
+  // eToro "Geschichte des Trades": bleiben sichtbar statt wie bei "Löschen"
+  // endgültig aus der Historie zu verschwinden) getrennt von offenen führen.
+  const portfolio = all.filter(p => !p.closed);
+  const closed = all.filter(p => p.closed);
 
   if (!portfolio.length) {
     list.innerHTML = '';
     empty.style.display = 'block';
-    return;
+  } else {
+    empty.style.display = 'none';
   }
-  empty.style.display = 'none';
+
+  if (closed.length) {
+    closedSection.style.display = 'block';
+    closedList.innerHTML = closed.map(p => {
+      const invested = (p.buy_price * p.shares).toFixed(2);
+      const openDate = p.buy_date
+        ? new Date(p.buy_date).toLocaleDateString('de-AT', {day:'2-digit',month:'2-digit',year:'numeric'})
+        : '–';
+      const closeDate = p.close_date
+        ? new Date(p.close_date).toLocaleDateString('de-AT', {day:'2-digit',month:'2-digit',year:'numeric'})
+        : '–';
+      const realized = p.realized_pnl;
+      const realizedPct = p.realized_pnl_pct;
+      const posNeg = realized != null ? (realized >= 0 ? 'pos' : 'neg') : '';
+      const realizedStr = realized != null ? `${realized >= 0 ? '+' : ''}$${realized.toFixed(2)}` : '–';
+      const realizedPctStr = realizedPct != null ? `${realizedPct >= 0 ? '+' : ''}${realizedPct.toFixed(2)}%` : '';
+      return `<div class="pf-card">
+        <div class="pf-card-hd">
+          <div>
+            <div class="pf-card-ticker">${esc(p.ticker)}</div>
+            <div class="pf-card-name">${esc(p.name)||'–'}</div>
+          </div>
+        </div>
+        <div class="pf-grid">
+          <div class="pf-kpi">
+            <div class="pf-kpi-label">Investiert</div>
+            <div class="pf-kpi-val">$${invested}</div>
+          </div>
+          <div class="pf-kpi">
+            <div class="pf-kpi-label">Einheiten</div>
+            <div class="pf-kpi-val">${p.shares}</div>
+          </div>
+          <div class="pf-kpi">
+            <div class="pf-kpi-label">Open</div>
+            <div class="pf-kpi-val">$${p.buy_price.toFixed(2)}<div style="font-size:.72rem;color:var(--muted)">${openDate}</div></div>
+          </div>
+          <div class="pf-kpi">
+            <div class="pf-kpi-label">Ende</div>
+            <div class="pf-kpi-val">${p.close_price != null ? '$' + p.close_price.toFixed(2) : '–'}<div style="font-size:.72rem;color:var(--muted)">${closeDate}</div></div>
+          </div>
+          <div class="pf-kpi" style="grid-column:1/-1">
+            <div class="pf-kpi-label">G/V</div>
+            <div class="pf-kpi-val ${posNeg}">${realizedStr} <span style="font-size:.8rem">${realizedPctStr}</span></div>
+          </div>
+        </div>
+        <div class="pf-btns" style="margin-top:10px">
+          <div style="flex:1"></div>
+          <button class="btn-del" onclick="deleteFromPortfolio('${p.ticker}')">Löschen</button>
+        </div>
+      </div>`;
+    }).join('');
+  } else {
+    closedSection.style.display = 'none';
+  }
+
+  if (!portfolio.length) return;
 
   // Echte Positionen (watch:false) immer vor Beobachtungen (watch:true) – Josef-Feedback 2026-08-14
   const sorted = [...portfolio].sort((a, b) => (a.watch ? 1 : 0) - (b.watch ? 1 : 0));
@@ -1476,7 +1564,8 @@ async function loadPortfolio() {
       </div>` : ''}
       <div class="pf-btns" style="margin-top:10px">
         ${sell ? `<button class="btn-reset-signal" onclick="resetSignal('${p.ticker}')">Signal zurücksetzen</button>` : '<div style="flex:1"></div>'}
-        ${watch ? `<button class="btn-reset-signal" onclick="convertToReal('${p.ticker}')">Zu echter Position machen</button>` : ''}
+        ${watch ? `<button class="btn-reset-signal" onclick="prefillConvert('${p.ticker}', ${price != null ? price : 'null'})">Zu echter Position machen</button>` : ''}
+        ${!watch ? `<button class="btn-reset-signal" onclick="closeFromPortfolio('${p.ticker}', ${price != null ? price : 'null'})">Schließen</button>` : ''}
         <button class="btn-del" onclick="deleteFromPortfolio('${p.ticker}')">Löschen</button>
       </div>
     </div>`;
@@ -1489,32 +1578,31 @@ async function deleteFromPortfolio(ticker) {
   loadPortfolio();
 }
 
-async function convertToReal(ticker) {
-  const sharesStr = prompt(`${ticker}: Wie viele Aktien hast du tatsächlich gekauft?`);
-  if (sharesStr === null) return;
-  const shares = parseFloat(sharesStr);
-  if (!shares || shares <= 0) { alert('Ungültige Anzahl.'); return; }
-
-  const currencyStr = (prompt(`${ticker}: Währung des Einstandskurses – "usd" oder "eur"? (leer = usd)\n\nAchtung bei Broker-Apps wie eToro: Der Stückpreis steht dort oft ohne Symbol bereits in USD, nur Summen wie "Nettowert" sind in €.`) || 'usd').trim().toLowerCase();
-  const currency = currencyStr === 'eur' ? 'EUR' : 'USD';
-
-  const priceStr = prompt(`${ticker}: Zu welchem Kurs (Einstand pro Aktie in ${currency === 'EUR' ? '€' : '$'})?`);
-  if (priceStr === null) return;
-  const buy_price = parseFloat(priceStr);
-  if (!buy_price || buy_price <= 0) { alert('Ungültiger Kurs.'); return; }
-
-  const buy_date = prompt(`${ticker}: Kaufdatum (YYYY-MM-DD, leer = heute)?${currency === 'EUR' ? ' Bestimmt bei €-Eingabe auch den Umrechnungskurs.' : ''}`) || undefined;
-
-  const r = await fetch(`/sentiment/api/portfolio/${ticker}/convert`, {
+async function closeFromPortfolio(ticker, price) {
+  const priceTxt = price != null ? `$${price.toFixed(2)}` : 'unbekanntem Kurs';
+  if (!confirm(`${ticker} zu ${priceTxt} schließen? Die Position bleibt zur Beobachtung in "Geschlossene Positionen" erhalten.`)) return;
+  const r = await fetch(`/sentiment/api/portfolio/${ticker}`, {
     method: 'PATCH',
-    body: JSON.stringify({ shares, buy_price, buy_date, currency }),
+    body: JSON.stringify({ closed: true }),
   });
   if (!r.ok) {
     const d = await r.json().catch(() => ({}));
-    alert(d.error || 'Umwandeln fehlgeschlagen.');
+    alert(d.error || 'Schließen fehlgeschlagen.');
     return;
   }
   loadPortfolio();
+}
+
+// Wandelt eine Auto-Watch-Beobachtung in eine echte Position um – nutzt dafür
+// dasselbe "Aktie hinzufügen"-Formular statt einer eigenen Eingabemaske
+// (Josef-Wunsch 2026-08-21: eine einheitliche, geführte Eingabe statt prompt()-
+// Ketten). addToPortfolio() erkennt bei 409 selbst, dass es sich um eine
+// Umwandlung handelt, und ruft den /convert-Endpoint auf.
+function prefillConvert(ticker, currentPrice) {
+  switchTab('portfolio');
+  document.getElementById('pf-ticker').value = ticker;
+  if (currentPrice != null) document.getElementById('pf-price').value = currentPrice;
+  document.getElementById('pf-shares').focus();
 }
 
 async function resetSignal(ticker) {

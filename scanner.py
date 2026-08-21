@@ -772,6 +772,11 @@ def _run_portfolio_scan_inner(portfolio: list[dict]) -> None:
         SCAN_STATUS["progress"] = i + 1
         SCAN_STATUS["current_ticker"] = ticker
 
+        if entry.get("closed"):
+            # Geschlossene Positionen sind fixiert (close_price/close_date) –
+            # kein Live-Kurs/Sentiment-Fetch mehr nötig.
+            continue
+
         sent = _fetch_sentiment(ticker)
         price = _fetch_quote(ticker)
 
@@ -849,6 +854,8 @@ def _update_portfolio_quotes(portfolio: list[dict]) -> None:
         return
     stale_entries = []
     for entry in portfolio:
+        if entry.get("closed"):
+            continue
         _apply_price(entry, _fetch_quote(entry["ticker"]))
         if entry["price_stale"]:
             stale_entries.append(entry)
@@ -898,6 +905,18 @@ def _split_telegram_message(text: str, limit: int = 4096) -> list[str]:
     return parts
 
 
+_TG_TOKEN_RE = re.compile(r"bot\d+:[\w-]+")
+_TG_RETRY_STATUS = {429, 500, 502, 503, 504}
+
+
+def _sanitize_tg_error(text: str) -> str:
+    """Entfernt das Bot-Token aus Fehlertexten bevor sie geloggt werden – manche
+    requests-Exceptions (z.B. ConnectionError/MaxRetryError) betten die volle
+    Request-URL inkl. Token in die Exception-Message ein, die sonst im
+    Klartext in scan.log landen würde (Sicherheitsregel CLAUDE.md)."""
+    return _TG_TOKEN_RE.sub("bot***", text)
+
+
 def _tg_post(text: str):
     token = os.environ.get("TOKEN", "")
     chat_id = os.environ.get("CHAT_ID", "")
@@ -905,18 +924,33 @@ def _tg_post(text: str):
         log.warning("Telegram: TOKEN oder CHAT_ID fehlt")
         return
     for part in _split_telegram_message(text):
-        try:
-            r = requests.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": part, "parse_mode": "HTML"},
-                timeout=15,
-            )
-            if not r.ok:
+        # Bounded Retry für transiente Fehler (Timeout/Connection/429/5xx) – ohne
+        # das ging ein Alert bei jedem einmaligen Netzwerk-Hänger endgültig
+        # verloren (live beobachtet: EMBC-Verkaufsempfehlung 2026-08-20 kam nicht
+        # an, keine zweite Chance vorhanden). 3 Versuche, kurzer Backoff –
+        # Telegram-API ist kostenlos, kein Rate-Limit-Risiko bei diesem Volumen
+        # (wenige Nachrichten/Tag).
+        for attempt in range(3):
+            try:
+                r = requests.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={"chat_id": chat_id, "text": part, "parse_mode": "HTML"},
+                    timeout=15,
+                )
+                if r.ok:
+                    break
+                if r.status_code in _TG_RETRY_STATUS and attempt < 2:
+                    time.sleep(2 * (attempt + 1))
+                    continue
                 # z.B. kaputtes HTML durch ungeschätzte externe Namen (Company-Name,
                 # Insider-Owner) → Telegram 400, Alert ging sonst stumm verloren
                 log.warning("Telegram-Fehler %s: %s", r.status_code, r.text[:200])
-        except Exception as e:
-            log.warning("Telegram-Fehler: %s", e)
+                break
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                log.warning("Telegram-Fehler: %s", _sanitize_tg_error(str(e)))
 
 
 def _send_telegram_top5(top5: list, scanned: int):
