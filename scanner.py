@@ -189,7 +189,7 @@ def _update_config(mutator_fn):
 
 _SCAN_OWNED_FIELDS = {
     "current_price", "price_stale", "price_updated_at", "last_sentiment",
-    "sell_signal", "sell_reason", "sell_signal_source",
+    "sell_signal", "sell_reason", "sell_signal_source", "peak_price",
 }
 
 
@@ -373,6 +373,47 @@ def _check_sell_signal(entry: dict, curr: dict) -> tuple[bool, str | None]:
     if prev_buzz > 1.0 and curr_buzz < 0.7:
         return True, f"Buzz eingebrochen ({prev_buzz:.2f} → {curr_buzz:.2f})"
 
+    return False, None
+
+
+def _update_peak_price(entry: dict) -> None:
+    """Hält das Hoch seit Kauf nach (peak_price) – Basis für den Trailing-Stop.
+    Startwert max(buy_price, aktueller Kurs), damit ein bereits gelaufener
+    Gewinn beim ersten Aufruf nicht auf den Einstandskurs zurückgesetzt wird."""
+    price = entry.get("current_price")
+    if not price:
+        return
+    baseline = entry.get("peak_price") or entry.get("buy_price", price)
+    entry["peak_price"] = max(baseline, price)
+
+
+def _check_trailing_stop_signal(entry: dict, cfg: dict) -> tuple[bool, str | None]:
+    """Preisbasiertes Verkaufssignal, unabhängig von Sentiment/Frühsignalen:
+    Kurs fällt um entry['trailing_stop_pct'] % vom Hoch seit Kauf (peak_price).
+    Deckt den Fall ab, dass eine Position ganz ohne Nachrichtenlage (buzz=0)
+    trotzdem fallen kann – dort liefern weder _check_sell_signal() (braucht
+    einen echten Sentiment-Umschwung) noch layer6_sell_signal.py (braucht
+    insider_sell/volume_anomaly) je ein Signal (Josef-Anstoß IMNM, Todo #283).
+
+    trailing_stop_pct wird bewusst PRO POSITION beim Kauf/Umwandeln abgefragt
+    (Josef-Wunsch), nicht global in config.json – Risikotoleranz unterscheidet
+    sich je nach Position/Überzeugung. Ohne gesetzten Wert (ältere Positionen
+    vor Einführung dieses Felds) liefert diese Funktion kein Signal."""
+    if not cfg.get("trailing_stop", {}).get("enabled", True):
+        return False, None
+
+    pct = entry.get("trailing_stop_pct")
+    price = entry.get("current_price")
+    peak = entry.get("peak_price")
+    if not pct or not price or not peak:
+        return False, None
+
+    drop_pct = (peak - price) / peak * 100
+    if drop_pct >= pct:
+        return True, (
+            f"Kurs {drop_pct:.1f}% unter Hoch seit Kauf "
+            f"(${peak:.2f} → ${price:.2f}, Trailing-Stop {pct:.0f}%)"
+        )
     return False, None
 
 
@@ -751,9 +792,14 @@ def _run_scan_inner(cfg: dict) -> dict:
 
 # ── Portfolio-Schnell-Scan ────────────────────────────────────────────────────
 
-def run_portfolio_scan() -> None:
-    """Nur Portfolio-Aktien scannen, Alert bei gedrehter Stimmung."""
+def run_portfolio_scan(cfg: dict | None = None) -> None:
+    """Nur Portfolio-Aktien scannen, Alert bei gedrehter Stimmung. cfg optional
+    (Aufrufer aus Hintergrund-Threads ohne bereits geladene Config, z.B.
+    api_portfolio_add()) – wird dann selbst nachgeladen."""
     global SCAN_STATUS
+    if cfg is None:
+        from app import _load_cfg
+        cfg = _load_cfg()
     if SCAN_STATUS.get("running"):
         log.info("Portfolio-Scan übersprungen – anderer Scan läuft bereits")
         return
@@ -770,7 +816,7 @@ def run_portfolio_scan() -> None:
     })
 
     try:
-        _run_portfolio_scan_inner(portfolio)
+        _run_portfolio_scan_inner(portfolio, cfg)
     finally:
         # Läuft IMMER, auch bei Exceptions – siehe run_scan()
         SCAN_STATUS.update({
@@ -813,7 +859,7 @@ def _apply_price(entry: dict, price: float | None) -> None:
         entry["price_stale"] = True
 
 
-def _run_portfolio_scan_inner(portfolio: list[dict]) -> None:
+def _run_portfolio_scan_inner(portfolio: list[dict], cfg: dict) -> None:
     log.info("Portfolio-Scan gestartet: %d Aktien", len(portfolio))
     stale_entries = []
 
@@ -840,6 +886,22 @@ def _run_portfolio_scan_inner(portfolio: list[dict]) -> None:
         _apply_price(entry, price)
         if entry["price_stale"]:
             stale_entries.append(entry)
+
+        # Preisbasiertes Verkaufssignal (Trailing-Stop) – läuft VOR dem
+        # `sent is None`-Continue, da rein auf current_price/peak_price
+        # basierend und unabhängig vom Sentiment-Fetch (deckt u.a. Ticker
+        # ohne jede Nachrichtenlage ab, für die _check_sell_signal() unten
+        # strukturell nie ein Signal liefern kann, Todo #283).
+        if not entry.get("watch"):
+            _update_peak_price(entry)
+            if not entry.get("sell_signal"):
+                ts_signal, ts_reason = _check_trailing_stop_signal(entry, cfg)
+                if ts_signal:
+                    entry["sell_signal"] = True
+                    entry["sell_reason"] = ts_reason
+                    entry["sell_signal_source"] = "preis"
+                    log.info("SELL-SIGNAL (Preis) %s: %s", ticker, ts_reason)
+                    _send_telegram_sell(entry, sent, price, ts_reason)
 
         if sent is None:
             continue
@@ -1024,20 +1086,26 @@ def _send_telegram_top5(top5: list, scanned: int):
     _tg_post("\n".join(lines))
 
 
-def _send_telegram_sell(entry: dict, sent: dict, price: float | None, reason: str):
+def _send_telegram_sell(entry: dict, sent: dict | None, price: float | None, reason: str):
+    """sent ist None wenn das Sell-Signal aus dem preisbasierten Trailing-Stop
+    stammt und der parallele Sentiment-Fetch im selben Scan-Durchlauf
+    fehlgeschlagen ist – Sentiment-Zeile wird dann einfach weggelassen."""
     ticker = entry["ticker"]
     name = entry.get("name", ticker)
     shares = entry.get("shares", 0)
-    buy_price = entry.get("buy_price", 0)
     curr_val = f"${price * shares:.2f}" if price else "–"
     pnl = entry.get("pnl")
     pnl_str = f"{'+'if pnl >= 0 else ''}{pnl:.2f} USD" if pnl is not None else "–"
+    sentiment_line = (
+        f"Bullish: {sent['bullish_pct']}% | Bearish: {sent['bearish_pct']}% | Buzz: {sent['buzz']:.2f}\n"
+        if sent else ""
+    )
 
     text = (
         f"🔴 <b>VERKAUFSEMPFEHLUNG: {html.escape(ticker)}</b>\n"
         f"{html.escape(name)}\n\n"
         f"<b>Grund:</b> {html.escape(reason)}\n\n"
-        f"Bullish: {sent['bullish_pct']}% | Bearish: {sent['bearish_pct']}% | Buzz: {sent['buzz']:.2f}\n"
+        f"{sentiment_line}"
         f"Aktueller Kurs: {'$'+f'{price:.2f}' if price else '–'}\n"
         f"Positionswert: {curr_val} | P&L: {pnl_str}\n\n"
         f"⚠️ Kein Investment-Advice. Nur Sentiment-Daten."

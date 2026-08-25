@@ -185,6 +185,9 @@ def _validate_cfg(cfg) -> str | None:
     if "early_signals" in cfg and not isinstance(cfg["early_signals"], dict):
         return "early_signals muss ein Objekt sein"
 
+    if "trailing_stop" in cfg and not isinstance(cfg["trailing_stop"], dict):
+        return "trailing_stop muss ein Objekt sein"
+
     return None
 
 
@@ -357,7 +360,8 @@ def _do_full_scan():
 
 
 def _do_portfolio_scan(force: bool = False):
-    if not _load_cfg().get("scan_enabled", True):
+    cfg = _load_cfg()
+    if not cfg.get("scan_enabled", True):
         return
     if not force and not _market_open():
         return
@@ -366,7 +370,7 @@ def _do_portfolio_scan(force: bool = False):
         log.info("Portfolio-Scan übersprungen – voller Scan läuft noch")
         return
     try:
-        run_portfolio_scan()
+        run_portfolio_scan(cfg)
     except Exception:
         log.exception("Portfolio-Scan-Fehler")
 
@@ -651,6 +655,22 @@ def api_portfolio_get():
 _TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
 
 
+def _parse_trailing_stop_pct(body: dict) -> tuple[float | None, str | None]:
+    """Optionales trailing_stop_pct aus dem Request-Body – pro Position beim
+    Kauf/Umwandeln festgelegt (Josef-Wunsch, Todo #283), nicht global in
+    config.json. Gibt (Wert, Fehlermeldung) zurück; (None, None) wenn das
+    Feld fehlt (Position bleibt dann ohne Trailing-Stop-Verkaufssignal)."""
+    if "trailing_stop_pct" not in body or body["trailing_stop_pct"] in (None, ""):
+        return None, None
+    try:
+        pct = float(body["trailing_stop_pct"])
+    except (TypeError, ValueError):
+        return None, "trailing_stop_pct muss numerisch sein"
+    if not (0 < pct <= 95):
+        return None, "trailing_stop_pct muss zwischen 0 und 95 liegen"
+    return pct, None
+
+
 @app.route("/sentiment/api/portfolio", methods=["POST"])
 @login_required
 def api_portfolio_add():
@@ -684,6 +704,10 @@ def api_portfolio_add():
         buy_price_eur = buy_price
         buy_price = round(buy_price * fx_rate_used, 4)
 
+    trailing_stop_pct, ts_error = _parse_trailing_stop_pct(body)
+    if ts_error:
+        return jsonify({"error": ts_error}), 400
+
     entry = {
         "ticker": ticker,
         "name": body.get("name", ""),
@@ -692,6 +716,7 @@ def api_portfolio_add():
         "buy_price_eur": buy_price_eur,
         "fx_rate_used": fx_rate_used,
         "buy_date": buy_date,
+        "trailing_stop_pct": trailing_stop_pct,
         "last_sentiment": None,
         "current_price": None,
         "current_value": None,
@@ -754,6 +779,13 @@ def api_portfolio_update(ticker: str):
     Vorbild eToro "Geschichte des Trades")."""
     ticker = ticker.upper()
     body = request.get_json(force=True)
+
+    trailing_stop_pct, ts_error = (None, None)
+    if "trailing_stop_pct" in body:
+        trailing_stop_pct, ts_error = _parse_trailing_stop_pct(body)
+        if ts_error:
+            return jsonify({"error": ts_error}), 400
+
     from scanner import _update_portfolio
     found, not_closable = False, False
 
@@ -762,6 +794,8 @@ def api_portfolio_update(ticker: str):
         for p in cur:
             if p["ticker"] == ticker:
                 found = True
+                if "trailing_stop_pct" in body:
+                    p["trailing_stop_pct"] = trailing_stop_pct
                 if "sell_signal" in body:
                     p["sell_signal"] = bool(body["sell_signal"])
                     p["sell_reason"] = None
@@ -823,6 +857,10 @@ def api_portfolio_convert(ticker: str):
         buy_price_eur = buy_price
         buy_price = round(buy_price * fx_rate_used, 4)
 
+    trailing_stop_pct, ts_error = _parse_trailing_stop_pct(body)
+    if ts_error:
+        return jsonify({"error": ts_error}), 400
+
     from scanner import _update_portfolio, _apply_price
     result = {"status": None}
 
@@ -837,6 +875,7 @@ def api_portfolio_convert(ticker: str):
                 p["buy_price"] = buy_price
                 p["buy_price_eur"] = buy_price_eur
                 p["fx_rate_used"] = fx_rate_used
+                p["trailing_stop_pct"] = trailing_stop_pct
                 if buy_date:
                     p["buy_date"] = buy_date
                 # Sofortige Neuberechnung mit dem letzten bekannten Kurs, statt bis

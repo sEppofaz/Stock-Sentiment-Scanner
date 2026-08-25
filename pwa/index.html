@@ -439,6 +439,13 @@ tr:last-child td{border-bottom:none}
           <input class="pf-input" id="pf-date" type="date">
         </div>
       </div>
+      <div class="pf-row">
+        <div class="pf-field">
+          <div class="pf-label">Trailing-Stop %</div>
+          <input class="pf-input" id="pf-ts" type="number" min="1" max="95" step="0.5" value="15">
+          <div style="font-size:.68rem;color:var(--muted);margin-top:3px">Automatische Verkaufsempfehlung, wenn der Kurs seit dem Hoch nach dem Kauf um diesen Prozentsatz fällt – unabhängig von Nachrichtenlage/Sentiment.</div>
+        </div>
+      </div>
       <button class="btn-pf-add" onclick="addToPortfolio()">+ Hinzufügen</button>
     </div>
     <div class="pf-refresh-bar">
@@ -527,6 +534,17 @@ tr:last-child td{border-bottom:none}
         <span class="cfg-label">Intervall (Tage)</span>
         <input class="cfg-input" type="number" id="cfg-wa-interval" min="1" max="30">
       </div>
+    </div>
+    <div class="cfg-section">
+      <div class="cfg-title">Trailing-Stop (Preis-Verkaufssignal)</div>
+      <div class="cfg-row">
+        <span class="cfg-label">Trailing-Stop-Signal aktiv</span>
+        <label class="cfg-toggle">
+          <input type="checkbox" id="cfg-ts-enabled">
+          <span class="cfg-slider"></span>
+        </label>
+      </div>
+      <div style="font-size:.72rem;color:var(--muted);padding:0 2px 6px">Der Prozentsatz wird pro Position beim Kauf/Umwandeln festgelegt (Portfolio-Tab), nicht hier global – dieser Schalter deaktiviert das Signal komplett, unabhängig von den einzelnen Positionen.</div>
     </div>
     <div class="cfg-section">
       <div class="cfg-title">Frühsignale</div>
@@ -776,6 +794,7 @@ tr:last-child td{border-bottom:none}
         <p class="info-p">Portfolio-Aktien werden alle 15 Minuten während der NYSE-Börsenzeiten (14:30–21:00 UTC, Mo–Fr) geprüft. Bei echter Stimmungsdrehung (z.&nbsp;B. Bullish ≥ 40 → &lt; 35) kommt ein Telegram-Alert und die Aktie wird rot markiert — <b>nur für echte, bestätigte Positionen</b> (nicht für 👁-Beobachtungen, die ohnehin keine echten Käufe sind).</p>
         <p class="info-p">Ein 5-Punkte-Buffer verhindert Flackern — das Sell-Signal löst nur bei echter Trendwende aus, nicht bei kurzfristigen Schwankungen.</p>
         <p class="info-p"><b>Zusätzliches Verkaufssignal aus Frühsignalen:</b> Nur für echte, bestätigte Positionen (nicht für 👁-Beobachtungen) wird alle paar Minuten während der Börsenzeit zusätzlich geprüft, ob ein Insider-Verkauf oder eine Volumen-Anomalie bei fallendem Kurs vorliegt — löst dieselbe rote Verkaufsempfehlung aus wie eine Stimmungsdrehung.</p>
+        <p class="info-p"><b>Trailing-Stop (Preis-Verkaufssignal):</b> Beide Signale oben brauchen eine echte Nachrichten- oder Insider-Lage — bei Tickern ganz ohne Presseabdeckung liefern sie nie ein Signal, egal wie sich der Kurs entwickelt. Der Trailing-Stop schließt diese Lücke rein über den Kurs: Beim Kauf/Umwandeln einer Position wird ein Prozentsatz festgelegt (Portfolio-Tab, Default 15 %) und nachträglich in der Positionskarte änderbar. Fällt der Kurs seit dem höchsten Stand nach dem Kauf um diesen Prozentsatz, kommt dieselbe rote Verkaufsempfehlung — unabhängig von Sentiment/Buzz. In den Einstellungen lässt sich der Mechanismus komplett deaktivieren.</p>
         <p class="info-p">Eine 👁-Beobachtung (automatisch angelegt bei einem Frühsignal-Alert) kannst du jederzeit über <b>„Zu echter Position machen"</b> in eine echte Position mit deinen tatsächlichen Kaufdaten (Anzahl, Einstandskurs, optional Datum) umwandeln — erst danach greift auch das Verkaufssignal für diesen Ticker.</p>
         <p class="info-p"><b>Einstandskurs in Euro:</b> Sowohl beim manuellen Hinzufügen als auch bei „Zu echter Position machen" kann der Einstandskurs wahlweise in Euro angegeben werden — die App rechnet automatisch zum Wechselkurs des Kaufdatums in USD um (Quelle: EZB-Referenzkurs via Frankfurter.app, kostenlos). Ohne Kaufdatum gilt der aktuelle Kurs. Die Karte zeigt darunter zusätzlich den ursprünglichen Euro-Betrag und den verwendeten Kurs.</p>
         <p class="info-p"><b>Position schließen</b> (nur für echte Positionen): Anders als „Löschen" entfernt „Schließen" die Position nicht aus der App, sondern verschiebt sie in die eigene Rubrik „Geschlossene Positionen" — mit Einstand, Schlusskurs/-datum (letzter bekannter Live-Kurs zum Zeitpunkt des Schließens) und realisiertem Gewinn/Verlust. Eine geschlossene Position wird nicht mehr live gescannt. „Löschen" bleibt zusätzlich verfügbar, wenn eine Position endgültig aus der Historie entfernt werden soll.</p>
@@ -899,7 +918,7 @@ tr:last-child td{border-bottom:none}
         <span>Dunkelmodus</span>
         <button class="theme-switch" id="theme-toggle" role="switch" aria-checked="false" onclick="toggleTheme()"><span class="theme-switch-knob"></span></button>
       </div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.27 · 2026-08-21 · a sEpp-App</p>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.28 · 2026-08-25 · a sEpp-App</p>
     </div>
   </div>
 </div>
@@ -1319,6 +1338,7 @@ async function triggerPortfolioScan() {
 // ── Portfolio ─────────────────────────────────────────────────────────────
 let _acResults = [], _acIdx = -1;
 let _pfRaw = [];
+let _tsEditing = null; // Ticker, dessen Trailing-Stop % gerade inline bearbeitet wird
 
 async function acQuery(q) {
   const list = document.getElementById('pf-ac-list');
@@ -1371,6 +1391,7 @@ async function addToPortfolio() {
   const buy_price = parseFloat(document.getElementById('pf-price').value);
   const buy_date = document.getElementById('pf-date').value;
   const currency = document.getElementById('pf-currency').value;
+  const trailing_stop_pct = parseFloat(document.getElementById('pf-ts').value) || null;
 
   if (!ticker || !shares || !buy_price) {
     alert('Ticker, Anzahl und Einstandskurs sind Pflichtfelder.');
@@ -1383,7 +1404,7 @@ async function addToPortfolio() {
 
   const r = await fetch('/sentiment/api/portfolio', {
     method: 'POST',
-    body: JSON.stringify({ ticker, name, shares, buy_price, buy_date, currency }),
+    body: JSON.stringify({ ticker, name, shares, buy_price, buy_date, currency, trailing_stop_pct }),
   });
   if (r.status === 409) {
     // Ticker existiert schon – meist eine Auto-Watch-Beobachtung (z.B. vom
@@ -1396,7 +1417,7 @@ async function addToPortfolio() {
     if (existing && existing.watch) {
       const cr = await fetch(`/sentiment/api/portfolio/${ticker}/convert`, {
         method: 'PATCH',
-        body: JSON.stringify({ shares, buy_price, buy_date, currency }),
+        body: JSON.stringify({ shares, buy_price, buy_date, currency, trailing_stop_pct }),
       });
       if (!cr.ok) {
         const d = await cr.json().catch(() => ({}));
@@ -1419,6 +1440,7 @@ async function addToPortfolio() {
   document.getElementById('pf-price').value = '';
   document.getElementById('pf-date').value = '';
   document.getElementById('pf-currency').value = 'USD';
+  document.getElementById('pf-ts').value = '15';
 
   loadPortfolio();
   loadDailyPick(); // Tages-Pick-Card auf Dashboard aktualisieren (zeigte sonst weiter "Position eintragen")
@@ -1591,6 +1613,19 @@ function renderPortfolio() {
           <div class="pf-kpi-label">P&amp;L</div>
           <div class="pf-kpi-val ${posNeg}">${pnlStr} <span style="font-size:.8rem">(${pnlPctStr})</span></div>
         </div>
+        <div class="pf-kpi" style="grid-column:1/-1">
+          <div class="pf-kpi-label">Trailing-Stop</div>
+          ${_tsEditing === p.ticker ? `
+          <div style="display:flex;gap:6px;align-items:center;margin-top:2px">
+            <input class="pf-input" type="number" min="1" max="95" step="0.5" id="ts-input-${esc(p.ticker)}"
+              value="${p.trailing_stop_pct ?? 15}" style="flex:1;padding:6px 8px">
+            <button class="btn-pf-add" style="padding:6px 12px" onclick="saveTrailingStop('${p.ticker}')">✓</button>
+            <button class="btn-del" style="padding:6px 12px" onclick="_tsEditing=null;renderPortfolio()">✕</button>
+          </div>` : `
+          <div class="pf-kpi-val">${p.trailing_stop_pct != null ? p.trailing_stop_pct + '%' : 'nicht gesetzt'}
+            <button class="btn-reset-signal" style="padding:2px 8px;font-size:.68rem;margin-left:6px" onclick="_tsEditing='${p.ticker}';renderPortfolio()">✎ ändern</button>
+          </div>`}
+        </div>
       </div>`;
 
     return `<div class="pf-card${sell?' sell-signal':''}">
@@ -1661,6 +1696,25 @@ async function resetSignal(ticker) {
   loadPortfolio();
 }
 
+async function saveTrailingStop(ticker) {
+  const v = parseFloat(document.getElementById(`ts-input-${ticker}`).value);
+  if (!v || v <= 0 || v > 95) {
+    alert('Trailing-Stop % muss zwischen 0 und 95 liegen.');
+    return;
+  }
+  const r = await fetch(`/sentiment/api/portfolio/${ticker}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ trailing_stop_pct: v }),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    alert(d.error || 'Speichern fehlgeschlagen.');
+    return;
+  }
+  _tsEditing = null;
+  loadPortfolio();
+}
+
 // ── Config ────────────────────────────────────────────────────────────────
 let _scanTimes = [];
 let _cfg = {};
@@ -1684,6 +1738,9 @@ async function loadConfig() {
 
   const wa = cfg.weekly_analysis || {};
   document.getElementById('cfg-wa-interval').value = wa.interval_days ?? 1;
+
+  const ts = cfg.trailing_stop || {};
+  document.getElementById('cfg-ts-enabled').checked = ts.enabled !== false;
 
   const es = cfg.early_signals || {};
   document.getElementById('cfg-es-enabled').checked = es.enabled === true;
@@ -1737,6 +1794,10 @@ async function saveConfig() {
     weekly_analysis: {
       ..._cfg.weekly_analysis,
       interval_days: +document.getElementById('cfg-wa-interval').value,
+    },
+    trailing_stop: {
+      ..._cfg.trailing_stop,
+      enabled: document.getElementById('cfg-ts-enabled').checked,
     },
     early_signals: {
       enabled: document.getElementById('cfg-es-enabled').checked,

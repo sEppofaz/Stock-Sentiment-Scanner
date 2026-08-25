@@ -42,5 +42,8 @@
     "repick_cooldown_days": 5,
     "min_score_early_signals": 5,
     "min_score_sentiment_scan": 60
+  },
+  "trailing_stop": {
+    "enabled": true
   }
 }

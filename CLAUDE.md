@@ -447,6 +447,18 @@ Direkte Konsequenz aus der Performance-Analyse vom selben Tag: der Durchschnitt 
 - **Ergebnis nach Korrektur (deutlich ehrlicher als vorher):** Sentiment-Scan-Empfehlungen: Median **−13,46%**, Trefferquote nur **31,7%** (n=60) – vorher wirkte das durch die Datenfehler positiver. Frühsignal-Alerts: Median **0,0%**, Ø **+0,44%** (vorher fälschlich Ø +25%), Trefferquote 47,8% (n=92) – im Wesentlichen Münzwurf-Niveau.
 - Frisch mit `analyze_and_store()` pro System verifiziert (nicht über `run_weekly_analysis()`, um den Telegram-Alert für „neue Erkenntnisse" nicht versehentlich als Nebeneffekt der Verifikation auszulösen).
 
+## Trailing-Stop: drittes Verkaufssignal, rein preisbasiert (2026-08-25, v1.28, ADR-020)
+
+Todo #283 (IMNM): Weder Sentiment-Umschwung (`_check_sell_signal()`) noch Frühsignal-Gegensignale (`layer6_sell_signal.py`) können bei einem Ticker ganz ohne Presseabdeckung je auslösen – beide brauchen echte Marktdaten, die bei `buzz=0` dauerhaft fehlen. Details/Begründung/verworfene Alternativen: `ADR-020`.
+
+- **Neue Felder auf `portfolio.json`-Einträgen:** `peak_price` (Hoch seit Kauf, scan-owned, bei jedem Portfolio-Scan aktualisiert – `scanner._update_peak_price()`), `trailing_stop_pct` (strukturell, wie `shares`/`buy_price` – vom Scan nie überschrieben, nur bei Kauf/Umwandeln/manuellem Edit gesetzt).
+- **`sell_signal_source` hat jetzt drei Werte:** `"sentiment"` | `"fruehsignal"` | `"preis"`. Nur `"sentiment"` resettet automatisch bei guter Stimmung (unverändert seit ADR-012); `"preis"` verhält sich wie `"fruehsignal"` – braucht immer den manuellen „Signal zurücksetzen"-Button.
+- **`trailing_stop_pct` wird PRO POSITION** im Formular „Aktie hinzufügen" (Portfolio-Tab, Default 15%) bzw. bei der Watch→Real-Umwandlung abgefragt, NICHT global in `config.json` – Josef-Wunsch, siehe ADR-020. Nachträglich änderbar per Inline-Edit direkt auf der Portfolio-Karte (`saveTrailingStop()` → `PATCH /api/portfolio/<ticker>` mit `trailing_stop_pct`).
+- **`config.json` → `trailing_stop.enabled`:** einziger globaler Wert, kompletter Kill-Switch für den Mechanismus (Settings-Tab). Fehlt der Schlüssel (alte `config.json` vor 2026-08-25), gilt `enabled=True` per `.get()`-Fallback – kein manuelles Nachziehen auf dem Server nötig.
+- **`run_portfolio_scan()` bekommt jetzt `cfg` als Parameter** (vorher intern nicht verfügbar). Aufrufer mit bereits geladener Config geben sie mit (`_do_portfolio_scan()`); Hintergrund-Threads aus `api_portfolio_add()`/`.../convert` rufen ohne `cfg` auf – wird dann lazy per `from app import _load_cfg` nachgeladen.
+- **Nebenbei behoben:** Die Preis-Prüfung lag vorher (implizit, weil neu direkt daneben eingebaut) hinter demselben `if sent is None: continue` wie die Sentiment-Logik – ein fehlgeschlagener `_fetch_sentiment()`-Call hätte sonst auch das reine Preis-Signal blockiert. `_send_telegram_sell()` toleriert seither `sent=None` (Sentiment-Zeile im Alert-Text entfällt dann einfach).
+- Bestehende Positionen ohne gesetztes `trailing_stop_pct` (bei Einführung: nur IMNM als echte Position) bekommen **kein** rückwirkendes Default – bewusste Entscheidung (ADR-020), Wert muss einmal über die Portfolio-Karte gesetzt werden.
+
 ## tickers.csv erneuern (quartalsweise)
 
 ```bash
