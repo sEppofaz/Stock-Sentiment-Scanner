@@ -125,6 +125,21 @@ def _load_portfolio() -> list[dict]:
         return []
 
 
+def _load_cfg() -> dict:
+    """Eigenständige, minimale Kopie von app._load_cfg() (statt Cross-Import) –
+    ein `from app import _load_cfg` hier würde in jedem Prozess, der scanner.py
+    ohne bereits geladenes app-Modul importiert (z.B. ein eigenständiges
+    Skript), app.py's Modulebene mit ausführen und damit einen zweiten
+    apscheduler samt aller Cron-Jobs starten (live gefunden bei der
+    Verifikation von ADR-020, kein Bug im laufenden Service selbst – dort ist
+    app bereits importiert – aber ein unnötiges Risiko)."""
+    path = BASE_DIR / "config.json"
+    if not path.exists():
+        import shutil
+        shutil.copy(BASE_DIR / "config.default.json", path)
+    return json.loads(path.read_text())
+
+
 def _save_portfolio(data: list[dict]):
     path = BASE_DIR / "portfolio.json"
     tmp = path.with_suffix(".tmp")
@@ -798,7 +813,6 @@ def run_portfolio_scan(cfg: dict | None = None) -> None:
     api_portfolio_add()) – wird dann selbst nachgeladen."""
     global SCAN_STATUS
     if cfg is None:
-        from app import _load_cfg
         cfg = _load_cfg()
     if SCAN_STATUS.get("running"):
         log.info("Portfolio-Scan übersprungen – anderer Scan läuft bereits")
