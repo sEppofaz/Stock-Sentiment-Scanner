@@ -459,6 +459,14 @@ Todo #283 (IMNM): Weder Sentiment-Umschwung (`_check_sell_signal()`) noch Frühs
 - **Nebenbei behoben:** Die Preis-Prüfung lag vorher (implizit, weil neu direkt daneben eingebaut) hinter demselben `if sent is None: continue` wie die Sentiment-Logik – ein fehlgeschlagener `_fetch_sentiment()`-Call hätte sonst auch das reine Preis-Signal blockiert. `_send_telegram_sell()` toleriert seither `sent=None` (Sentiment-Zeile im Alert-Text entfällt dann einfach).
 - Bestehende Positionen ohne gesetztes `trailing_stop_pct` (bei Einführung: nur IMNM als echte Position) bekommen **kein** rückwirkendes Default – bewusste Entscheidung (ADR-020), Wert muss einmal über die Portfolio-Karte gesetzt werden.
 
+## Automatisches Cleanup alter Auto-Watch-Beobachtungen (2026-08-25, v1.29, ADR-021)
+
+Todo #287 (Nebenfund zu Todo #283): `portfolio.json` war auf 746 Einträge gewachsen (743 Auto-Watch-Beobachtungen), Portfolio-Scan brauchte dadurch rechnerisch länger als das 15-Min-Intervall. Details/Begründung: `ADR-021`.
+
+- **`scanner.cleanup_stale_watches()`**, täglich im bestehenden `_do_cleanup()`-Job (03:00 UTC, `daily_cleanup`): entfernt `watch=True`+nicht-geschlossene Einträge mit `buy_date` älter als `_WATCH_RETENTION_DAYS` (30, hardcoded wie `buzz_history`/`edgar_seen`-Schwellen). Echte (`watch=False`) und geschlossene (`closed=True`) Positionen nie betroffen.
+- **Verifiziert unabhängig von der Analyse:** `weekly_analysis.py`/`forward_tracker.py` lesen `portfolio.json` nie – die Trefferquote/Rendite-Historie liegt vollständig in `signals.db` (`alerts`/`forward_returns`), von `cleanup_old_data()` bewusst nie angetastet. Entfernte Watch-Einträge verlieren nur die Live-Karte im Früh-/Portfolio-Tab, keine Auswertungsdaten.
+- Einmalig manuell angestoßen bei Einführung: 107/743 sofort entfernt (>30 Tage), 636 verbleiben bis sie selbst altern. **Steady State erst nach ~3-4 Wochen** – die Scan-Dauer war zum Einführungszeitpunkt trotz Cleanup noch >15 Min (bei 636 verbleibenden Einträgen), das ist erwartetes Übergangsverhalten, kein Bug.
+
 ## tickers.csv erneuern (quartalsweise)
 
 ```bash
