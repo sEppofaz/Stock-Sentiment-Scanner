@@ -503,6 +503,12 @@ def _do_cleanup():
                   buzz_deleted, edgar_deleted)
     except Exception:
         log.exception("Cleanup fehlgeschlagen")
+    try:
+        from scanner import cleanup_stale_watches
+        watches_deleted = cleanup_stale_watches()
+        log.info("Cleanup: %d Auto-Watch-Beobachtungen entfernt (>30 Tage, Todo #287)", watches_deleted)
+    except Exception:
+        log.exception("Watch-Cleanup fehlgeschlagen")
 
 
 from signals_db import init_db

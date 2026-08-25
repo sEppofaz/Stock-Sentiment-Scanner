@@ -11,7 +11,7 @@ import anthropic
 import requests
 from collections import Counter
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 import costs
 import signals_db
@@ -255,6 +255,42 @@ def _merge_portfolio_updates(computed: list[dict]) -> None:
         return result
 
     _update_portfolio(_merge)
+
+
+_WATCH_RETENTION_DAYS = 30
+
+
+def cleanup_stale_watches() -> int:
+    """Entfernt Auto-Watch-Beobachtungen (watch=True), die älter als
+    _WATCH_RETENTION_DAYS sind – NIE echte Positionen (watch=False) oder
+    geschlossene Positionen (closed=True, bewusste Handelshistorie).
+
+    portfolio.json-Einträge dienen für Beobachtungen NUR der Live-Anzeige im
+    Früh-/Portfolio-Tab (aktueller Kurs, Sentiment, "Rendite seit Signal") –
+    die eigentliche Auswertungshistorie (Trefferquote/Rendite für die
+    wöchentliche Performance-Analyse) liegt vollständig unabhängig davon in
+    signals.db (alerts/forward_returns), dauerhaft und von cleanup_old_data()
+    bewusst nie angetastet. Ein entfernter Watch-Eintrag verliert also keine
+    Auswertungsfähigkeit, nur die Live-Karte in der App.
+
+    Ohne dieses Cleanup wächst portfolio.json unbegrenzt mit jedem Frühsignal-
+    Alert (auto_watch) – live beobachtet: 743 Beobachtungen nach ~7 Wochen,
+    wodurch der 15-Min-Portfolio-Scan-Cronjob am Finnhub-Rate-Limit (55
+    Calls/Min) nicht mehr in einem Durchlauf fertig wird (Todo #287)."""
+    cutoff = (date.today() - timedelta(days=_WATCH_RETENTION_DAYS)).isoformat()
+    removed = {"count": 0}
+
+    def _mutator(cur):
+        kept = []
+        for p in cur:
+            if p.get("watch") and not p.get("closed") and (p.get("buy_date") or "") < cutoff:
+                removed["count"] += 1
+                continue
+            kept.append(p)
+        return kept
+
+    _update_portfolio(_mutator)
+    return removed["count"]
 
 
 def _calc_score(d: dict) -> float:
