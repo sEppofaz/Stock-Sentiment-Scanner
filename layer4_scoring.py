@@ -145,6 +145,12 @@ def run_scoring(cfg: dict) -> None:
             if s["signal_type"] == "insider_buy":
                 w = 3.0 + (2.0 if d.get("cluster") else 0.0)
             elif s["signal_type"] == "volume_anomaly":
+                # Richtungsblind bis 2026-09-11 gefixt (Fable-Review): ein
+                # Volumen-Ausschlag bei fallendem Kurs ist kein Kaufsignal.
+                # Alte Signale ohne "direction" (vor dem Fix) werden wie
+                # bisher als bullish gewertet, altern aber binnen 7 Tagen aus.
+                if d.get("direction") == "down":
+                    continue
                 w = 3.0 if d.get("z_score", 0) >= 4.0 else 2.0
             elif s["signal_type"] == "large_holder":
                 w = 3.0 if d.get("form_type") == "13D" else 1.5
@@ -199,7 +205,7 @@ def check_instant_alerts(cfg: dict) -> None:
         if r["signal_type"] == "insider_buy":
             strong = bool(d.get("cluster")) or d.get("total_usd", 0) >= ins_min
         elif r["signal_type"] == "volume_anomaly":
-            strong = d.get("z_score", 0) >= vol_min
+            strong = d.get("z_score", 0) >= vol_min and d.get("direction") == "up"
         elif r["signal_type"] == "buzz_accel":
             strong = d.get("rel_accel", 0) >= buzz_min
         elif r["signal_type"] == "large_holder":

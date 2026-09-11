@@ -56,9 +56,10 @@ def run_volume_scan(cfg: dict) -> None:
         for sym in chunk:
             try:
                 vol = data[sym]["Volume"].dropna()
+                close = data[sym]["Close"].dropna()
             except (KeyError, TypeError):
                 continue
-            if len(vol) < MIN_HISTORY:
+            if len(vol) < MIN_HISTORY or len(close) < 2:
                 continue
             today_vol = float(vol.iloc[-1])
             base = [float(v) for v in vol.iloc[-21:-1]]
@@ -75,9 +76,24 @@ def run_volume_scan(cfg: dict) -> None:
             z = (today_vol - mean_v) / sd_v
             if z < z_min or not _news_flat(sym):
                 continue
+            # Richtung des Anomalie-Tages (Fable-Review 2026-09-11): ein
+            # Volumen-Ausschlag ist für sich genommen richtungsneutral (kann
+            # Panikverkäufe/Block-Trade genauso wie echtes Kaufinteresse
+            # bedeuten) – Close ggü. Vorschlusskurs entscheidet, ob der
+            # Ausschlag bullish oder bearish zu werten ist. Wird trotzdem für
+            # BEIDE Richtungen gespeichert, da layer6_sell_signal.py gezielt
+            # den fallenden Fall für Verkaufssignale bei echten Positionen
+            # braucht (eigener Live-Quote-Check dort, nutzt dieses Feld
+            # nicht direkt, aber die Signal-Zeile muss weiter existieren).
+            price_today = float(close.iloc[-1])
+            price_prev = float(close.iloc[-2])
+            price_change_pct = round((price_today - price_prev) / price_prev * 100, 2) \
+                if price_prev else 0.0
+            direction = "up" if price_change_pct > 0 else "down"
             score = 3.0 if z >= 4.0 else 2.0
             insert_signal(sym, "volume_anomaly", now_iso, round(z, 2),
                           {"z_score": round(z, 2), "volume": today_vol,
-                           "mean_20d": round(mean_v), "weight": score})
+                           "mean_20d": round(mean_v), "weight": score,
+                           "direction": direction, "price_change_pct": price_change_pct})
             hits += 1
     log.info("Volumen-Scan fertig: %d Anomalien", hits)

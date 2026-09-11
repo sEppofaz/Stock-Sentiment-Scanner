@@ -48,12 +48,25 @@ def _has_cross_signal(ticker: str) -> bool:
 
 
 def _distinct_signal_types_recent(ticker: str, days: int = 7) -> int:
+    """Zählt für C1 (Kombi-Bestätigung), wie viele unterschiedliche
+    Signal-Typen ein Ticker in den letzten `days` Tagen hatte. Ein
+    volume_anomaly bei fallendem Kurs ist kein Kaufhinweis (Fable-Review
+    2026-09-11) und darf hier nicht als bestätigender Typ mitzählen –
+    Signale ohne "direction" (vor dem Fix) werden weiterhin mitgezählt,
+    altern aber binnen `days` Tagen automatisch aus."""
     with get_conn() as conn:
-        row = conn.execute(
-            "SELECT COUNT(DISTINCT signal_type) c FROM signals WHERE ticker=? "
+        rows = conn.execute(
+            "SELECT signal_type, details_json FROM signals WHERE ticker=? "
             "AND signal_ts >= strftime('%Y-%m-%dT%H:%M:%S', 'now', ?)",
-            (ticker, f"-{days} days")).fetchone()
-    return row["c"]
+            (ticker, f"-{days} days")).fetchall()
+    types = set()
+    for r in rows:
+        if r["signal_type"] == "volume_anomaly":
+            d = json.loads(r["details_json"] or "{}")
+            if d.get("direction") == "down":
+                continue
+        types.add(r["signal_type"])
+    return len(types)
 
 
 def _repicked_recently(ticker: str, cooldown_days: int) -> bool:
