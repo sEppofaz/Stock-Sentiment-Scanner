@@ -509,6 +509,13 @@ def _do_cleanup():
         log.info("Cleanup: %d Auto-Watch-Beobachtungen entfernt (>30 Tage, Todo #287)", watches_deleted)
     except Exception:
         log.exception("Watch-Cleanup fehlgeschlagen")
+    try:
+        from return_reverify import reverify_recent
+        n_fwd, n_scan = reverify_recent()
+        log.info("Cleanup: Renditen-Nachprüfung (Yahoo-Datenkorrekturen) – "
+                  "%d forward_returns + %d scan_forward_returns korrigiert", n_fwd, n_scan)
+    except Exception:
+        log.exception("Renditen-Nachprüfung fehlgeschlagen")
 
 
 from signals_db import init_db
