@@ -189,10 +189,16 @@ def _confidence(n_pos: int, n_neg: int) -> str:
 
 
 def _suggest_adjustments(cfg: dict, system: str, report: dict) -> list[dict]:
-    """Vergleicht Mittelwerte zwischen Positiv-/Negativ-Gruppe und schlägt bei
+    """Vergleicht Mediane zwischen Positiv-/Negativ-Gruppe und schlägt bei
     auffälligem Unterschied (>=20% relative Differenz) eine konkrete
-    Config-Anpassung vor. Grobe Faustregel auf Basis von Mittelwerten, kein
+    Config-Anpassung vor. Grobe Faustregel auf Basis von Medianen, kein
     statistischer Test – Konfidenz (Stichprobengröße) wird immer mitgegeben.
+
+    Median statt Mittelwert (Fable-Review 2026-09-11): _overall_stats() (Josef-
+    Feedback 2026-08-21) stellte die Report-Anzeige bereits auf Median um, weil
+    einzelne Ausreißer (z.B. der Split-Bug aus ADR-019) den Mittelwert stark
+    verzerren können – dieselbe Anfälligkeit bestand hier weiter, obwohl diese
+    Funktion tatsächlich automatisch config.json verändert (_apply_suggestions).
 
     Wichtig: wenn die Negativ-Gruppe bei einer eigentlich 'höher=besser'
     gewerteten Metrik den höheren Wert hat (unexpected_inverse), wird KEIN
@@ -209,12 +215,12 @@ def _suggest_adjustments(cfg: dict, system: str, report: dict) -> list[dict]:
         neg_stat = neg["stats"].get(metric) if system == "sentiment" else neg.get(metric)
         if not pos_stat or not neg_stat:
             continue
-        pos_mean, neg_mean = pos_stat.get("mean"), neg_stat.get("mean")
-        if pos_mean is None or neg_mean is None:
+        pos_median, neg_median = pos_stat.get("median"), neg_stat.get("median")
+        if pos_median is None or neg_median is None:
             continue
 
-        base = max(abs(pos_mean), abs(neg_mean), 1e-9)
-        rel_diff = (pos_mean - neg_mean) / base
+        base = max(abs(pos_median), abs(neg_median), 1e-9)
+        rel_diff = (pos_median - neg_median) / base
         if abs(rel_diff) < 0.2:
             continue  # kein auffälliger Unterschied
 
@@ -224,7 +230,7 @@ def _suggest_adjustments(cfg: dict, system: str, report: dict) -> list[dict]:
 
         entry = {
             "metric": metric, "label": label, "direction": direction,
-            "pos_mean": pos_mean, "neg_mean": neg_mean,
+            "pos_median": pos_median, "neg_median": neg_median,
             "rel_diff_pct": round(rel_diff * 100, 1),
             "config_keys": config_keys, "confidence": conf,
         }
@@ -233,13 +239,13 @@ def _suggest_adjustments(cfg: dict, system: str, report: dict) -> list[dict]:
         verb = "anheben" if direction == "higher_is_better" else "senken"
 
         if confirms and config_keys:
-            suggested = round((pos_mean + neg_mean) / 2, 2)
+            suggested = round((pos_median + neg_median) / 2, 2)
             current_vals = {k: _cfg_get(cfg, k) for k in config_keys}
             entry["kind"] = "raise_threshold"
             entry["suggested_value"] = suggested
             entry["current_values"] = current_vals
             entry["text"] = (
-                f"{label}: Positiv-Gruppe Ø {pos_mean} vs. Negativ-Gruppe Ø {neg_mean} "
+                f"{label}: Positiv-Gruppe Median {pos_median} vs. Negativ-Gruppe Median {neg_median} "
                 f"({cmp_word} Wert = bessere Performance, bestätigt bisherige Annahme). "
                 f"Faustregel-Vorschlag: {', '.join(config_keys)} (aktuell {current_vals}) "
                 f"Richtung {suggested} {verb}, um näher am Profil der Positiv-Gruppe zu filtern."
@@ -247,7 +253,7 @@ def _suggest_adjustments(cfg: dict, system: str, report: dict) -> list[dict]:
         elif confirms:
             entry["kind"] = "observation_confirms"
             entry["text"] = (
-                f"{label}: Positiv-Gruppe Ø {pos_mean} vs. Negativ-Gruppe Ø {neg_mean} "
+                f"{label}: Positiv-Gruppe Median {pos_median} vs. Negativ-Gruppe Median {neg_median} "
                 f"({cmp_word} Wert = bessere Performance). Kein config.json-Schwellenwert vorhanden – "
                 + (f"Kandidat für eine Gewichts-Anpassung im Code ({weight_hint})."
                    if weight_hint else "aktuell nur Beobachtung, kein direkter Hebel.")
@@ -255,8 +261,8 @@ def _suggest_adjustments(cfg: dict, system: str, report: dict) -> list[dict]:
         else:
             entry["kind"] = "unexpected_inverse"
             entry["text"] = (
-                f"{label}: Negativ-Gruppe hat hier den höheren/'stärkeren' Wert (Ø {neg_mean} vs. "
-                f"Ø {pos_mean} in der Positiv-Gruppe) – WIDERSPRICHT der bisherigen Annahme "
+                f"{label}: Negativ-Gruppe hat hier den höheren/'stärkeren' Wert (Median {neg_median} vs. "
+                f"Median {pos_median} in der Positiv-Gruppe) – WIDERSPRICHT der bisherigen Annahme "
                 f"'{cmp_word} Wert = stärkeres Signal'. Kein einfacher Schwellenwert-Vorschlag möglich "
                 f"(bräuchte z.B. eine Obergrenze statt nur eine Untergrenze) – eher ein Hinweis, extreme "
                 f"Werte hier nicht unreflektiert als Bonus zu werten."
