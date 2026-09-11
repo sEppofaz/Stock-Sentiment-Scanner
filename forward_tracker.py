@@ -7,6 +7,19 @@ from yf_helper import fetch_closes
 
 log = logging.getLogger("scanner")
 
+_BENCHMARKS = ("IWM", "SPY")
+
+
+def _get_benchmark_closes(symbol: str, start_date: str, cache: dict):
+    """Cached pro (symbol, start_date) innerhalb EINES Tracker-Laufs – mehrere
+    Alerts vom selben Tag teilen sich denselben Benchmark-Download statt ihn
+    mehrfach zu wiederholen (analog G7-Fix, aber für IWM/SPY statt den
+    Ticker selbst, Fable-Review 2026-09-11)."""
+    key = (symbol, start_date)
+    if key not in cache:
+        cache[key] = fetch_closes(symbol, start_date)
+    return cache[key]
+
 
 def run_tracker(cfg: dict) -> None:
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -22,12 +35,15 @@ def run_tracker(cfg: dict) -> None:
     for r in open_rows:
         by_alert.setdefault((r["ticker"], r["alert_id"]), []).append(r)
 
+    bench_cache: dict[tuple, object] = {}
     filled = 0
     for (ticker, alert_id), rows in by_alert.items():
         alert_ts = rows[0]["alert_ts"]
         closes = fetch_closes(ticker, alert_ts[:10])
         if closes is None:
             continue
+        bench_closes = {sym: _get_benchmark_closes(sym, alert_ts[:10], bench_cache)
+                         for sym in _BENCHMARKS}
         # Referenzkurs kommt seit 2026-08-21 aus derselben (jetzt Split-
         # bereinigten) yfinance-Reihe wie der Horizont-Kurs, NICHT mehr aus
         # der separat gespeicherten Finnhub-Live-Quote (price_at_alert) - die
@@ -43,11 +59,20 @@ def run_tracker(cfg: dict) -> None:
                 continue
             try:
                 ret = (float(closes.iloc[r["horizon_days"]]) / baseline - 1) * 100
+                bench_rets = {}
+                for sym, bc in bench_closes.items():
+                    if bc is not None and len(bc) > r["horizon_days"]:
+                        bench_rets[sym] = round(
+                            (float(bc.iloc[r["horizon_days"]]) / float(bc.iloc[0]) - 1) * 100, 2)
+                    else:
+                        bench_rets[sym] = None
                 with get_conn() as conn:
                     conn.execute(
-                        "UPDATE forward_returns SET ret_pct=?, filled_ts=? "
+                        "UPDATE forward_returns SET ret_pct=?, filled_ts=?, "
+                        "benchmark_iwm_ret_pct=?, benchmark_spy_ret_pct=? "
                         "WHERE alert_id=? AND horizon_days=?",
-                        (round(ret, 2), now_iso, alert_id, r["horizon_days"]))
+                        (round(ret, 2), now_iso, bench_rets["IWM"], bench_rets["SPY"],
+                         alert_id, r["horizon_days"]))
                 filled += 1
             except Exception as e:
                 log.warning("Tracker %s h=%d: %s", ticker, r["horizon_days"], e)

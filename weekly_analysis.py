@@ -70,6 +70,31 @@ def _top_examples(rows: list[dict], key: str, n: int, reverse: bool) -> list[dic
     return [{"ticker": r["ticker"], "ret_pct": r[key]} for r in ordered]
 
 
+def _dedupe_overlapping(rows: list[dict], ticker_key: str, ts_key: str,
+                         window_days: int) -> list[dict]:
+    """Behält pro Ticker nur den ersten Datenpunkt je nicht-überlappendem
+    window_days-Fenster (Fable-Review 2026-09-11): bei laufender Nachrichten-/
+    Signallage taucht derselbe Ticker oft mehrfach mit überlappenden
+    Rückblick-Fenstern auf – das sind keine unabhängigen 'Wetten', zählten
+    bisher aber als getrennte n in Trefferquote/Median UND in den
+    Schwellenwert-Vorschlägen (_suggest_adjustments), was beide optimistisch
+    verzerrt. window_days = derselbe Horizont, der gerade ausgewertet wird
+    (20 für die Haupt-Analyse, 1/5 für die kurzen Zusatz-Horizonte)."""
+    by_ticker: dict[str, list[dict]] = {}
+    for r in rows:
+        by_ticker.setdefault(r[ticker_key], []).append(r)
+    kept = []
+    for trows in by_ticker.values():
+        trows.sort(key=lambda r: r[ts_key])
+        last_ts = None
+        for r in trows:
+            ts = datetime.fromisoformat(r[ts_key])
+            if last_ts is None or (ts - last_ts).days >= window_days:
+                kept.append(r)
+                last_ts = ts
+    return kept
+
+
 def _split_groups(rows: list[dict], pos_thr: float, neg_thr: float) -> dict:
     """rows brauchen 'ret_pct'. Fester Schwellenwert ist stabiler interpretierbar
     über Wochen hinweg als Quartile; Quartil-Fallback nur bei zu kleiner Gruppe."""
@@ -341,21 +366,45 @@ _SENTIMENT_VALUE_COLS = ["score", "bullish_pct", "bearish_pct", "buzz",
                          "beta", "float_shares"]
 
 
+def _sentiment_rows_for_horizon(horizon_days: int) -> list[dict]:
+    """Schlanke Zeilen (nur für _overall_stats) für einen Zusatz-Horizont
+    (1/5 Handelstage) – unabhängig vom Haupt-Horizont HORIZON=20, auf dem
+    Gruppierung/Vorschläge weiterhin basieren (Fable-Review 2026-09-11:
+    klärt ob ein Signal grundsätzlich wertlos ist oder nur zu spät
+    einsteigt). Gleiche Dedup-Regel wie die Hauptauswertung."""
+    with get_conn() as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT s.ticker, s.snapshot_ts, sfr.ret_pct "
+            "FROM scan_snapshots s JOIN scan_forward_returns sfr ON sfr.snapshot_id = s.id "
+            "WHERE sfr.horizon_days = ? AND sfr.ret_pct IS NOT NULL",
+            (horizon_days,),
+        ).fetchall()]
+    return _dedupe_overlapping(rows, "ticker", "snapshot_ts", window_days=horizon_days)
+
+
 def _analyze_sentiment(cfg: dict) -> dict:
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute(
             "SELECT s.ticker, s.snapshot_ts, s.score, s.bullish_pct, s.bearish_pct, "
             "       s.buzz, s.articles_week, s.sentiment_norm, s.market_cap, s.pe, "
             "       s.pinned, s.claude_confidence, s.avg_volume_10d, s.avg_volume_3m, "
-            "       s.beta, s.float_shares, s.sector, sfr.ret_pct "
+            "       s.beta, s.float_shares, s.sector, sfr.ret_pct, "
+            "       sfr.benchmark_iwm_ret_pct, sfr.benchmark_spy_ret_pct "
             "FROM scan_snapshots s JOIN scan_forward_returns sfr ON sfr.snapshot_id = s.id "
             "WHERE sfr.horizon_days = ? AND sfr.ret_pct IS NOT NULL",
             (HORIZON,),
         ).fetchall()]
 
+    rows = _dedupe_overlapping(rows, "ticker", "snapshot_ts", window_days=HORIZON)
     n = len(rows)
     if n < MIN_SAMPLE:
         return _insufficient_report("sentiment", n)
+
+    for r in rows:
+        r["excess_iwm_pct"] = round(r["ret_pct"] - r["benchmark_iwm_ret_pct"], 2) \
+            if r.get("benchmark_iwm_ret_pct") is not None else None
+        r["excess_spy_pct"] = round(r["ret_pct"] - r["benchmark_spy_ret_pct"], 2) \
+            if r.get("benchmark_spy_ret_pct") is not None else None
 
     pos_thr, neg_thr = _thresholds(cfg, "sentiment")
     groups = _split_groups(rows, pos_thr, neg_thr)
@@ -382,6 +431,10 @@ def _analyze_sentiment(cfg: dict) -> dict:
         "period_start": min(r["snapshot_ts"] for r in rows)[:10],
         "period_end": max(r["snapshot_ts"] for r in rows)[:10],
         "overall": _overall_stats(rows),
+        "overall_1d": _overall_stats(_sentiment_rows_for_horizon(1)),
+        "overall_5d": _overall_stats(_sentiment_rows_for_horizon(5)),
+        "overall_vs_iwm": _overall_stats(rows, ret_key="excess_iwm_pct"),
+        "overall_vs_spy": _overall_stats(rows, ret_key="excess_spy_pct"),
         "pos_group": _summarize(groups["pos"], "pos"),
         "neg_group": _summarize(groups["neg"], "neg"),
     }
@@ -389,24 +442,51 @@ def _analyze_sentiment(cfg: dict) -> dict:
 
 # ── Frühsignal-Analyse ─────────────────────────────────────────────────────────
 
+def _early_signal_rows_for_horizon(horizon_days: int) -> list[dict]:
+    """Schlanke Zeilen (nur für _overall_stats) für einen Zusatz-Horizont
+    (1/5 Handelstage), analog _sentiment_rows_for_horizon() (Fable-Review
+    2026-09-11)."""
+    with get_conn() as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT a.ticker, a.alert_ts, fr.ret_pct "
+            "FROM alerts a JOIN forward_returns fr ON fr.alert_id = a.id "
+            "WHERE fr.horizon_days = ? AND fr.ret_pct IS NOT NULL",
+            (horizon_days,),
+        ).fetchall()]
+    return _dedupe_overlapping(rows, "ticker", "alert_ts", window_days=horizon_days)
+
+
 def _analyze_early_signals(cfg: dict) -> dict:
     with get_conn() as conn:
         alert_rows = [dict(r) for r in conn.execute(
-            "SELECT a.id, a.ticker, a.alert_ts, a.total_score, a.kind, a.signal_ids, fr.ret_pct "
+            "SELECT a.id, a.ticker, a.alert_ts, a.total_score, a.kind, a.signal_ids, "
+            "       fr.ret_pct, fr.benchmark_iwm_ret_pct, fr.benchmark_spy_ret_pct "
             "FROM alerts a JOIN forward_returns fr ON fr.alert_id = a.id "
             "WHERE fr.horizon_days = ? AND fr.ret_pct IS NOT NULL",
             (HORIZON,),
         ).fetchall()]
 
-        all_sig_ids = set()
-        for a in alert_rows:
-            try:
-                all_sig_ids.update(json.loads(a["signal_ids"] or "[]"))
-            except Exception:
-                pass
+    alert_rows = _dedupe_overlapping(alert_rows, "ticker", "alert_ts", window_days=HORIZON)
+    n = len(alert_rows)
+    if n < MIN_SAMPLE:
+        return _insufficient_report("early_signals", n)
 
-        sig_map = {}
-        if all_sig_ids:
+    for r in alert_rows:
+        r["excess_iwm_pct"] = round(r["ret_pct"] - r["benchmark_iwm_ret_pct"], 2) \
+            if r.get("benchmark_iwm_ret_pct") is not None else None
+        r["excess_spy_pct"] = round(r["ret_pct"] - r["benchmark_spy_ret_pct"], 2) \
+            if r.get("benchmark_spy_ret_pct") is not None else None
+
+    all_sig_ids = set()
+    for a in alert_rows:
+        try:
+            all_sig_ids.update(json.loads(a["signal_ids"] or "[]"))
+        except Exception:
+            pass
+
+    sig_map = {}
+    if all_sig_ids:
+        with get_conn() as conn:
             placeholders = ",".join("?" * len(all_sig_ids))
             for r in conn.execute(
                 f"SELECT id, signal_type, details_json FROM signals WHERE id IN ({placeholders})",
@@ -417,10 +497,6 @@ def _analyze_early_signals(cfg: dict) -> dict:
                 except Exception:
                     details = {}
                 sig_map[r["id"]] = {"signal_type": r["signal_type"], "details": details}
-
-    n = len(alert_rows)
-    if n < MIN_SAMPLE:
-        return _insufficient_report("early_signals", n)
 
     for a in alert_rows:
         try:
@@ -482,6 +558,10 @@ def _analyze_early_signals(cfg: dict) -> dict:
         "period_start": min(r["alert_ts"] for r in alert_rows)[:10],
         "period_end": max(r["alert_ts"] for r in alert_rows)[:10],
         "overall": _overall_stats(alert_rows),
+        "overall_1d": _overall_stats(_early_signal_rows_for_horizon(1)),
+        "overall_5d": _overall_stats(_early_signal_rows_for_horizon(5)),
+        "overall_vs_iwm": _overall_stats(alert_rows, ret_key="excess_iwm_pct"),
+        "overall_vs_spy": _overall_stats(alert_rows, ret_key="excess_spy_pct"),
         "pos_group": _summarize(groups["pos"], "pos"),
         "neg_group": _summarize(groups["neg"], "neg"),
     }

@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS forward_returns (
     horizon_days  INTEGER NOT NULL,   -- 1 | 5 | 20 (Handelstage)
     ret_pct       REAL,
     filled_ts     TEXT,
+    benchmark_iwm_ret_pct REAL,       -- IWM-Rendite im selben Fenster (Fable-Review 2026-09-11)
+    benchmark_spy_ret_pct REAL,       -- SPY-Rendite im selben Fenster
     PRIMARY KEY (alert_id, horizon_days)
 );
 
@@ -81,6 +83,8 @@ CREATE TABLE IF NOT EXISTS scan_forward_returns (
     horizon_days  INTEGER NOT NULL,   -- 1 | 5 | 20 (Handelstage), gleiche Horizonte wie forward_returns
     ret_pct       REAL,
     filled_ts     TEXT,
+    benchmark_iwm_ret_pct REAL,       -- IWM-Rendite im selben Fenster (Fable-Review 2026-09-11)
+    benchmark_spy_ret_pct REAL,       -- SPY-Rendite im selben Fenster
     PRIMARY KEY (snapshot_id, horizon_days)
 );
 
@@ -156,6 +160,15 @@ def init_db():
         ):
             if col not in snap_cols:
                 conn.execute(f"ALTER TABLE scan_snapshots ADD COLUMN {col} {coltype}")
+
+        # Migration: forward_returns/scan_forward_returns vor 2026-09-11 hatten
+        # noch keine Benchmark-Spalten (Fable-Review: Trefferquote war bisher
+        # absolut, nicht markt-relativ)
+        for table in ("forward_returns", "scan_forward_returns"):
+            fr_cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+            for col in ("benchmark_iwm_ret_pct", "benchmark_spy_ret_pct"):
+                if col not in fr_cols:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} REAL")
 
 
 def cleanup_old_data() -> tuple[int, int]:
