@@ -270,6 +270,9 @@ tr:last-child td{border-bottom:none}
 .es-filter-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
 .es-filter-chip{font-size:.75rem;padding:5px 10px;border-radius:20px;background:var(--bg3);color:var(--muted);border:none;cursor:pointer;transition:background .15s,color .15s}
 .es-filter-chip.active{background:var(--accent);color:#fff}
+.es-filter-chip.not-actionable{opacity:.55}
+.es-signal-item.not-actionable{opacity:.7}
+.es-signal-na-badge{font-size:.68rem;color:var(--muted);margin-top:4px;font-style:italic}
 
 /* Scroll-to-Top */
 .back-top{position:fixed;bottom:calc(72px + env(safe-area-inset-bottom));right:16px;width:40px;height:40px;border-radius:50%;background:var(--accent);color:#fff;border:none;font-size:20px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.25);display:none;align-items:center;justify-content:center;z-index:200}
@@ -598,10 +601,12 @@ tr:last-child td{border-bottom:none}
         <span class="cfg-label">Einzelsignal Volumen-z-Score min. (Instant)</span>
         <input class="cfg-input" type="number" id="cfg-es-single-volume-z-min" min="0" step="0.1">
       </div>
+      <div style="font-size:.72rem;color:var(--muted);padding:0 2px 6px">Aktuell ohne Wirkung, solange volume_anomaly nicht in early_signals.actionable_types enthalten ist.</div>
       <div class="cfg-row">
         <span class="cfg-label">Einzelsignal Buzz-Beschleunigung min. (Instant)</span>
         <input class="cfg-input" type="number" id="cfg-es-single-buzz-accel-min" min="0" step="0.1">
       </div>
+      <div style="font-size:.72rem;color:var(--muted);padding:0 2px 6px">Aktuell ohne Wirkung, solange buzz_accel nicht in early_signals.actionable_types enthalten ist.</div>
       <div class="cfg-row">
         <span class="cfg-label">Einzelsignal 13G-Anteil min. % (Instant)</span>
         <input class="cfg-input" type="number" id="cfg-es-single-13g-pct" min="0" max="100" step="0.5">
@@ -864,6 +869,7 @@ tr:last-child td{border-bottom:none}
       <div class="info-section">
         <div class="info-section-title">Frühsignale (Tab „Früh")</div>
         <p class="info-p">Zusätzlich zum Sentiment-Scan läuft ein zweites, unabhängiges System, das nach Frühindikatoren sucht — Signale, die typischerweise <b>vor</b> einem News-Buzz auftreten. Wichtig: <b>Kein einzelnes Signal ist eine Kaufempfehlung</b> — es ist ein Hinweis „hier lohnt sich ein genauerer Blick" (Chart, aktuelle News, Fundamentaldaten selbst prüfen).</p>
+        <p class="info-p"><b>Seit 12.09.2026 zählen nur noch Insider-Käufe und Großaktionärsmeldungen (13D/13G) als Kaufsignal</b> für Alert/Tages-Pick — eine Payoff-Ratio-Analyse zeigte negative Expectancy bei Sentiment-Scan und Volumen-Anomalie. Volumen-Anomalie und Buzz-Beschleunigung werden weiterhin erfasst und unten im Signal-Feed angezeigt (Kennzeichnung „⏸ nicht mehr aktionabel"), lösen aber keinen Alert/Pick/Auto-Watch mehr aus. Details siehe „Performance-Analyse"-Sektion.</p>
 
         <div class="info-setting">
           <div class="info-setting-name">Insider-Kauf</div>
@@ -871,13 +877,13 @@ tr:last-child td{border-bottom:none}
         </div>
 
         <div class="info-setting">
-          <div class="info-setting-name">Volumen-Anomalie &amp; z-Score</div>
-          <span>Der <b>z-Score</b> misst, wie stark das heutige Handelsvolumen vom 20-Tage-Durchschnitt abweicht — in „Standardabweichungen". Faustregel: <b>z = 0</b> normales Volumen · <b>z = 2–3</b> auffällig, kommt öfter mal vor · <b>z = 4–6</b> statistisch selten, echter Ausreißer · <b>z ≥ 6</b> extrem selten (deshalb unsere Schwelle für einen sofortigen Alert). Ein hoher z-Score <b>ohne</b> begleitende News heißt: Es wird gerade ungewöhnlich viel gehandelt, aber die Öffentlichkeit weiß noch nicht warum — genau das ist das Frühsignal. Im Signal-Feed siehst du zusätzlich die reale Volumenzahl und das Vielfache des Durchschnitts (z.&nbsp;B. „3,2× Ø").</span>
+          <div class="info-setting-name">Volumen-Anomalie &amp; z-Score <span style="font-weight:400;color:var(--muted)">— ⏸ aktuell kein Alert-Trigger mehr</span></div>
+          <span>Der <b>z-Score</b> misst, wie stark das heutige Handelsvolumen vom 20-Tage-Durchschnitt abweicht — in „Standardabweichungen". Faustregel: <b>z = 0</b> normales Volumen · <b>z = 2–3</b> auffällig, kommt öfter mal vor · <b>z = 4–6</b> statistisch selten, echter Ausreißer · <b>z ≥ 6</b> extrem selten. Ein hoher z-Score <b>ohne</b> begleitende News heißt: Es wird gerade ungewöhnlich viel gehandelt, aber die Öffentlichkeit weiß noch nicht warum. Wird weiterhin erfasst und im Signal-Feed angezeigt (reale Volumenzahl + Vielfaches des Durchschnitts, z.&nbsp;B. „3,2× Ø"), löst seit 12.09.2026 aber keinen Alert mehr aus (negative Expectancy in der Payoff-Ratio-Analyse).</span>
         </div>
 
         <div class="info-setting">
-          <div class="info-setting-name">Buzz-Beschleunigung</div>
-          <span>Vergleicht die Artikelanzahl der letzten 3 Tage mit den 3 Tagen davor (aus den ohnehin gesammelten Sentiment-Scan-Daten, keine zusätzlichen API-Calls). Ein Sprung von z.&nbsp;B. 2 auf 8 Artikel (+300 %) zeigt beginnendes Medieninteresse, <b>bevor</b> es die Mindest-Artikelzahl für den Haupt-Sentiment-Score erreicht.</span>
+          <div class="info-setting-name">Buzz-Beschleunigung <span style="font-weight:400;color:var(--muted)">— ⏸ aktuell kein Alert-Trigger mehr</span></div>
+          <span>Vergleicht die Artikelanzahl der letzten 3 Tage mit den 3 Tagen davor (aus den ohnehin gesammelten Sentiment-Scan-Daten, keine zusätzlichen API-Calls). Ein Sprung von z.&nbsp;B. 2 auf 8 Artikel (+300 %) zeigt beginnendes Medieninteresse, <b>bevor</b> es die Mindest-Artikelzahl für den Haupt-Sentiment-Score erreicht. Wird weiterhin erfasst und angezeigt, löst seit 12.09.2026 aber keinen Alert mehr aus (siehe Volumen-Anomalie oben).</span>
         </div>
 
         <div class="info-setting">
@@ -889,20 +895,20 @@ tr:last-child td{border-bottom:none}
           <div class="info-setting-name">Wann ist das ein Kauf-Hinweis?</div>
           <span>Nie automatisch. Ein <b>Alert</b> (siehe unten) ist der Moment, an dem sich ein genauerer Blick lohnt. Je mehr <b>unabhängige</b> Signal-Typen gleichzeitig auftreten, desto glaubwürdiger. Die Trefferquote-Statistik zeigt ehrlich, ob das System überhaupt funktioniert — dafür ist die Validierungsphase da (siehe Disclaimer unten).</span>
         </div>
-        <p class="info-p">Ein <b>Alert</b> entsteht auf zwei Wegen: (a) mindestens zwei verschiedene Signal-Typen für denselben Ticker innerhalb von 7 Tagen kommen zusammen und erreichen einen Mindest-Score, oder (b) ein <b>einzelnes, besonders starkes Signal</b> (z. B. Insider-Cluster, Kauf ≥ $100.000, Volumen-z-Score ≥ 6, Buzz-Beschleunigung ≥ 300 %, 13D-Meldung) löst sofort aus — alle 15 Min geprüft, ohne auf ein zweites Signal zu warten. Ein 7-Tage-Cooldown verhindert Alert-Spam pro Ticker. Pro Handelstag werden zusätzlich nur die stärksten Instant-Alerts per Telegram verschickt (einstellbar, Standard 5) — kommt später am Tag ein noch stärkeres Signal, geht das ebenfalls raus, auch wenn das Tageskontingent schon ausgeschöpft ist.</p>
+        <p class="info-p">Ein <b>Alert</b> entsteht auf zwei Wegen: (a) mindestens zwei verschiedene <b>aktionable</b> Signal-Typen für denselben Ticker innerhalb von 7 Tagen kommen zusammen und erreichen einen Mindest-Score, oder (b) ein <b>einzelnes, besonders starkes Signal</b> (Insider-Cluster oder Kauf ≥ $100.000, 13D-Meldung) löst sofort aus — alle 15 Min geprüft, ohne auf ein zweites Signal zu warten. Aktuell aktionabel: Insider-Kauf und Großaktionär (13D/13G) — Volumen-Anomalie und Buzz-Beschleunigung zählen seit 12.09.2026 nicht mehr mit (siehe oben). Ein 7-Tage-Cooldown verhindert Alert-Spam pro Ticker. Pro Handelstag werden zusätzlich nur die stärksten Instant-Alerts per Telegram verschickt (einstellbar, Standard 5) — kommt später am Tag ein noch stärkeres Signal, geht das ebenfalls raus, auch wenn das Tageskontingent schon ausgeschöpft ist.</p>
         <p class="info-p"><b>Die Zahl neben dem Ticker im Alert</b> ist der Rohwert des jeweils auslösenden Signals (z. B. der Volumen-z-Score oder der Buzz-Beschleunigungsfaktor) — keine einheitlich normierte Skala. Ein Wert von „7" bei einer Volumen-Anomalie (z-Score) ist nicht direkt mit einer „7" bei Buzz-Beschleunigung vergleichbar. Die genaue Bedeutung je Signaltyp steht oben in den jeweiligen Abschnitten, die vollen Rohwerte (Volumen, $-Betrag, Artikelzahlen) stehen im Signal-Feed.</p>
         <p class="info-p">Im Signal-Feed kannst du über die Filter-Chips nach einzelnen Signal-Typen filtern.</p>
         <p class="info-p"><b>Automatische Beobachtung:</b> Jeder Alert-Ticker wird automatisch mit 1 Test-Aktie zum Kurs bei Alert ins Portfolio aufgenommen (Kennzeichnung „👁 Beobachtung"). So siehst du im Portfolio-Tab die Rendite seit dem Signal, ohne selbst tätig werden zu müssen — kein echter Kauf, keine echten Kosten. Abschaltbar über <code>early_signals.auto_watch</code>. Beobachtungen werden nach 30 Tagen automatisch wieder entfernt (tägliches Cleanup) — die eigentliche Auswertungshistorie (Trefferquote/Rendite) bleibt davon unberührt, die liegt unabhängig davon dauerhaft in der Datenbank. Echte Positionen sind davon nie betroffen.</p>
         <p class="info-p">Die aktuellsten Alerts erscheinen zusätzlich oben im <b>Dashboard</b> — unabhängig davon, ob der Ticker die News-Sentiment-Filter erfüllt (das ist ja gerade der Witz: Frühsignale kommen oft, bevor die Presse berichtet).</p>
         <p class="info-p">Die <b>Statistik je Horizont</b> (1/5/20 Handelstage) zeigt Trefferquote und durchschnittliche Rendite aller bisherigen Alerts — automatisch nachgezogen (Forward-Tracker).</p>
-        <p class="info-p"><b>Heutiger Tages-Pick:</b> Statt einzelne Alerts/Scan-Treffer selbst sichten zu müssen, ermittelt das System werktags um 18:05 Uhr (America/New_York) höchstens EINEN Kauf-Kandidaten für den Tag — über beide Systeme (Frühsignale + Sentiment-Scan) hinweg, mit Bestätigung durch mehrere Signale, Veto bei Gegensignalen (z. B. Insider-Verkauf) und Mindest-Qualität. Ein Ticker, der bereits in den letzten Tagen gepickt wurde, wird übersprungen (Repick-Cooldown). Gibt es keinen qualifizierten Kandidaten, wird das ebenfalls kurz gemeldet („Kein Tages-Pick heute") statt zu schweigen. Die Karte oben im Dashboard zeigt die konkreten Rohwerte hinter dem Pick (welcher Insider hat wie viel gekauft, welcher z-Score, welcher Sentiment-Scan-Wert) — <b>keine automatische Kaufempfehlung, nur ein Hinweis für den eigenen Check.</b> Über den Button „Position eintragen" auf der Karte kannst du den Pick direkt zur echten Portfolio-Position machen.</p>
+        <p class="info-p"><b>Heutiger Tages-Pick:</b> Statt einzelne Alerts selbst sichten zu müssen, ermittelt das System werktags um 18:05 Uhr (America/New_York) höchstens EINEN Kauf-Kandidaten für den Tag — seit 12.09.2026 ausschließlich aus den Frühsignalen (Insider-Käufe, Großaktionärsmeldungen), der Sentiment-Scan-Pfad ist deaktiviert (negative Expectancy, reaktivierbar über <code>daily_pick.sentiment_scan_actionable</code>), mit Bestätigung durch mehrere Signale, Veto bei Gegensignalen (z. B. Insider-Verkauf) und Mindest-Qualität. Ein Ticker, der bereits in den letzten Tagen gepickt wurde, wird übersprungen (Repick-Cooldown). Gibt es keinen qualifizierten Kandidaten, wird das ebenfalls kurz gemeldet („Kein Tages-Pick heute") statt zu schweigen. Die Karte oben im Dashboard zeigt die konkreten Rohwerte hinter dem Pick (welcher Insider hat wie viel gekauft, welcher z-Score, welcher Sentiment-Scan-Wert) — <b>keine automatische Kaufempfehlung, nur ein Hinweis für den eigenen Check.</b> Über den Button „Position eintragen" auf der Karte kannst du den Pick direkt zur echten Portfolio-Position machen.</p>
         <div class="info-disclaimer">Validierungsphase: Die Hypothese, dass diese Frühindikatoren tatsächlich vorhersagekräftig sind, ist unbewiesen. Erst nach 2–3 Monaten Datenhistorie ist die Statistik belastbar. Kein Investment-Advice.</div>
       </div>
 
       <!-- Performance-Analyse -->
       <div class="info-section">
         <div class="info-section-title">Performance-Analyse (Tab „Analyse")</div>
-        <p class="info-p">Vergleicht regelmäßig positiv vs. negativ performende Empfehlungen (Kursrendite 20 Handelstage später), getrennt für Sentiment-Scan, Frühsignale und die Überschneidung beider Systeme (Cross-Signal). Zeigt, welche Eigenschaften die beiden Gruppen unterschieden haben.</p>
+        <p class="info-p">Vergleicht regelmäßig positiv vs. negativ performende Datengruppen (Kursrendite 20 Handelstage später), getrennt für Sentiment-Scan, Frühsignale und die Überschneidung beider Systeme (Cross-Signal). Zeigt, welche Eigenschaften die beiden Gruppen unterschieden haben. <b>Seit 12.09.2026 sind Sentiment-Scan und Cross-Signal reine Rückblick-Statistik</b> — beide Datenquellen sind aktuell keine Kaufsignal-Quelle mehr (siehe „Frühsignale" oben), die Analyse läuft aber unverändert weiter, falls sich das Bild mit mehr Daten ändert.</p>
         <p class="info-p"><b>Median + Trefferquote:</b> Die „Gesamt"-Kachel oben zeigt zusätzlich zum Durchschnitt den Median (typischer Ausgang) und die Trefferquote (Anteil profitabler Empfehlungen) über die komplette Stichprobe. Bei wenigen, aber extremen Ausreißern kann der Durchschnitt deutlich positiver aussehen als der Median — beide Zahlen zusammen geben ein ehrlicheres Bild als der Durchschnitt allein.</p>
         <p class="info-p"><b>Läuft automatisch</b> im einstellbaren Intervall (Standard täglich, „Intervall (Tage)" in den Einstellungen) nach Börsenschluss, sobald die frischen Kursrenditen des Tages nachgetragen sind. 0 € Kosten – reine SQL-Auswertung, kein Claude-Call.</p>
         <p class="info-p"><b>Automatische Übernahme der Basis-Schwelle:</b> Ergibt sich ein statistisch auffälliger, die bisherige Annahme bestätigender Unterschied (💡 „Schwellenwert-Vorschlag"), wird der vorgeschlagene Zahlenwert automatisch in die passende Basis-Einstellung übernommen (z.&nbsp;B. <code>early_signals.volume_z_min</code>) – erkennbar an der grünen „✅ Automatisch übernommen"-Markierung auf der Vorschlagskarte. Gibt es zu diesem Hebel zusätzlich eine höhere, bewusst separate Schwelle (z.&nbsp;B. die Einzelsignal-Schwelle für Instant-Alerts), bleibt die unangetastet – sonst würde der beabsichtigte Sicherheitsabstand zwischen „Signal zählt überhaupt" und „Signal ist stark genug für einen Soforteinzel-Alert" eingeebnet.</p>
@@ -918,7 +924,7 @@ tr:last-child td{border-bottom:none}
         <span>Dunkelmodus</span>
         <button class="theme-switch" id="theme-toggle" role="switch" aria-checked="false" onclick="toggleTheme()"><span class="theme-switch-knob"></span></button>
       </div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.29 · 2026-08-25 · a sEpp-App</p>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.30 · 2026-09-12 · a sEpp-App</p>
     </div>
   </div>
 </div>
@@ -1718,11 +1724,17 @@ async function saveTrailingStop(ticker) {
 // ── Config ────────────────────────────────────────────────────────────────
 let _scanTimes = [];
 let _cfg = {};
+// Welche Frühsignal-Typen aktuell Alert/Daily-Pick/Auto-Watch auslösen
+// (2026-09-12) – Fallback bis loadConfig() zum ersten Mal gelaufen ist,
+// danach immer aus der geladenen Config abgeleitet (kein Hardcoding, sonst
+// Text/Config-Drift wie bei den "Aktuell:"-Werten, siehe PWA-Standards).
+let _actionableTypes = new Set(['insider_buy', 'large_holder']);
 
 async function loadConfig() {
   const r = await fetch('/sentiment/api/config');
   const cfg = await r.json();
   _cfg = cfg;
+  _actionableTypes = new Set((cfg.early_signals || {}).actionable_types || ['insider_buy', 'large_holder']);
   const f = cfg.filter;
   _scanTimes = cfg.scan_times_utc || [];
   document.getElementById('cfg-scan-enabled').checked = cfg.scan_enabled !== false;
@@ -1800,6 +1812,7 @@ async function saveConfig() {
       enabled: document.getElementById('cfg-ts-enabled').checked,
     },
     early_signals: {
+      ..._cfg.early_signals,
       enabled: document.getElementById('cfg-es-enabled').checked,
       auto_watch: document.getElementById('cfg-es-auto-watch').checked,
       max_instant_alerts_per_day: +document.getElementById('cfg-es-max-alerts').value,
@@ -1934,7 +1947,9 @@ function esFormatDetail(type, d) {
 function renderEsFilterChips() {
   document.getElementById('es-filter').innerHTML = ES_FILTER_TYPES.map(t => {
     const active = _esActiveFilters.has(t);
-    return `<button class="es-filter-chip${active ? ' active' : ''}" onclick="toggleEsFilter('${t}')">${esc(ES_TYPE_LABEL[t])}</button>`;
+    const na = !_actionableTypes.has(t);
+    return `<button class="es-filter-chip${active ? ' active' : ''}${na ? ' not-actionable' : ''}"
+      onclick="toggleEsFilter('${t}')" title="${na ? 'Löst aktuell keinen Alert/Pick mehr aus' : ''}">${esc(ES_TYPE_LABEL[t])}${na ? ' ⏸' : ''}</button>`;
   }).join('');
 }
 
@@ -1954,7 +1969,8 @@ function renderEsSignals() {
   document.getElementById('es-signals').innerHTML = filtered.map(s => {
     let det = {};
     try { det = JSON.parse(s.details_json || '{}'); } catch(e) {}
-    return `<div class="es-signal-item">
+    const na = !_actionableTypes.has(s.signal_type);
+    return `<div class="es-signal-item${na ? ' not-actionable' : ''}">
       <div class="es-signal-top">
         <div class="es-signal-left">
           <span class="es-signal-ticker">${esc(s.ticker)}</span>
@@ -1963,6 +1979,7 @@ function renderEsSignals() {
         <span class="es-signal-date">${esDate(s.signal_ts)}</span>
       </div>
       <div class="es-signal-detail">${esFormatDetail(s.signal_type, det)}</div>
+      ${na ? '<div class="es-signal-na-badge">⏸ nicht mehr aktionabel – löst keinen Alert/Pick mehr aus</div>' : ''}
     </div>`;
   }).join('');
 }
@@ -2284,6 +2301,9 @@ function toggleTheme() {
 // ── Init ──────────────────────────────────────────────────────────────────
 loadResults();
 loadPortfolio();
+// Frueh laden (auch wenn der Frueh-Tab noch nicht besucht wurde), damit
+// _actionableTypes vor dem ersten Rendern der Signal-Feed-Chips gesetzt ist.
+loadConfig();
 // Sofort Status prüfen (könnte Scan von vorhin noch laufen)
 pollScanStatus().then(() => {
   if (document.getElementById('progress-bar').classList.contains('show')) startPolling();
