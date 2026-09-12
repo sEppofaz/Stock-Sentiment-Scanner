@@ -620,6 +620,40 @@ tr:last-child td{border-bottom:none}
         <input class="cfg-input" type="number" id="cfg-es-single-13g-pct" min="0" max="100" step="0.5">
       </div>
     </div>
+    <div class="cfg-section">
+      <div class="cfg-title">Value-Layer</div>
+      <div class="cfg-row">
+        <span class="cfg-label">Value-Layer aktiv (samstags automatisch)</span>
+        <label class="cfg-toggle">
+          <input type="checkbox" id="cfg-vl-enabled">
+          <span class="cfg-slider"></span>
+        </label>
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">MarketCap min. $</span>
+        <input class="cfg-input" type="number" id="cfg-vl-mcap-min" min="0" step="1000000">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">KGV max.</span>
+        <input class="cfg-input" type="number" id="cfg-vl-pe-max" min="0" step="1">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">P/B max.</span>
+        <input class="cfg-input" type="number" id="cfg-vl-pb-max" min="0" step="0.1">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">ROE min. %</span>
+        <input class="cfg-input" type="number" id="cfg-vl-roe-min" step="1">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Verschuldungsgrad max. (Debt/Equity)</span>
+        <input class="cfg-input" type="number" id="cfg-vl-debt-equity-max" min="0" step="0.1">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Top-N Ergebnisse</span>
+        <input class="cfg-input" type="number" id="cfg-vl-top-n" min="1" max="200">
+      </div>
+    </div>
     <button class="btn-save" onclick="saveConfig()">Speichern</button>
     <div class="save-ok" id="save-ok">✓ Gespeichert</div>
     <button class="btn-del" style="width:100%;margin-top:16px" onclick="location.href='/sentiment/logout'">Abmelden</button>
@@ -728,6 +762,20 @@ tr:last-child td{border-bottom:none}
     <div id="an-ai-text"></div>
   </div>
 
+  <!-- Value/Quality-Screening -->
+  <div class="screen" id="screen-value">
+    <div class="es-note">Fundamentale Unterbewertung (KGV/P-B/EV-FCF) kombiniert mit Qualität (ROE/Verschuldung/Umsatzwachstum) – Rang-basiertes Scoring unter den gefundenen Kandidaten. Eigenständig, kein Zusammenspiel mit Sentiment/Frühsignalen. Läuft automatisch samstags, sofern aktiviert.</div>
+
+    <div class="an-actions">
+      <button class="btn-an-run" id="btn-value-run" onclick="runValueScan()">🔍 Jetzt scannen (~85 Min)</button>
+    </div>
+    <div id="value-status" style="font-size:.8rem;color:var(--muted);margin:8px 0 16px"></div>
+
+    <div class="section-title">Top-Kandidaten</div>
+    <div id="value-signals"></div>
+    <div id="value-signals-empty" style="display:none" class="es-empty">Noch keine Value-Signale – Scan starten oder auf den nächsten Samstag warten (falls aktiviert).</div>
+  </div>
+
 </main>
 
 <nav class="tabs">
@@ -746,6 +794,10 @@ tr:last-child td{border-bottom:none}
   <button class="tab" onclick="switchTab('analysis')" id="tab-analysis">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg>
     Analyse
+  </button>
+  <button class="tab" onclick="switchTab('value')" id="tab-value">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42Z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/></svg>
+    Value
   </button>
 </nav>
 
@@ -927,12 +979,22 @@ tr:last-child td{border-bottom:none}
         <div class="info-disclaimer">Erste aussagekräftige Ergebnisse erst nach mehreren Wochen Datensammlung (Mindeststichprobe 15 gereifte Datenpunkte je Gruppe). Kein Investment-Advice.</div>
       </div>
 
+      <!-- Value-Layer -->
+      <div class="info-section">
+        <div class="info-section-title">Value-Layer (Tab „Value")</div>
+        <p class="info-p">Sucht fundamental unterbewertete, aber gesunde Aktien — unabhängig vom Sentiment-Scan und den Frühsignalen (kein gemeinsames Scoring, bewusst getrennt gehalten). Kombiniert einen <b>Value-Rang</b> (günstig: KGV, P/B, EV/FCF) mit einem <b>Quality-Rang</b> (gesund: ROE, Verschuldungsgrad, Current Ratio, Umsatzwachstum) — jeweils 0–100 im Vergleich zu den anderen gefundenen Kandidaten, 50/50 kombiniert zum Gesamt-Score. Eine einzelne extreme Kennzahl kann den Score dadurch nicht dominieren.</p>
+        <p class="info-p"><b>Distress-Veto:</b> Aktien mit Current Ratio &lt; 1 <i>und</i> negativer Eigenkapitalrendite werden unabhängig vom Score ausgeschlossen — „billig, aber wahrscheinlich aus gutem Grund" statt echter Chance.</p>
+        <p class="info-p"><b>F-Score (reduziert):</b> Angelehnt an den Piotroski-F-Score, aber nur mit den Kriterien, die ohne Vorjahresvergleich prüfbar sind (Finnhub liefert keine Zeitreihe dafür) — Anzeige z.&nbsp;B. „4/5" heißt 4 von 5 <i>verfügbaren</i> Kriterien erfüllt, kein vollständiger 0–9-Score.</p>
+        <p class="info-p"><b>Läuft automatisch</b> samstags 06:00 UTC über alle Ticker (~85 Minuten), sofern in den Einstellungen aktiviert — bewusst am Wochenende, weil Fundamentaldaten sich nicht untertägig ändern und dort kein anderer Job um das Finnhub-Kontingent konkurriert. „🔍 Jetzt scannen" startet einen Testlauf sofort, unabhängig vom Aktiv-Schalter.</p>
+        <div class="info-disclaimer">Value-Picks brauchen typischerweise Monate bis Jahre, bis sich eine Unterbewertung auflöst — anders als bei den Frühsignalen sind kurzfristige Kursbewegungen kein sinnvoller Erfolgsmaßstab. Kein Investment-Advice.</div>
+      </div>
+
       <div class="info-disclaimer">Kein Investment-Advice. Nur Sentiment-Daten aus Medienberichten. Keine Kauf- oder Verkaufsempfehlung.</div>
       <div class="theme-switch-row">
         <span>Dunkelmodus</span>
         <button class="theme-switch" id="theme-toggle" role="switch" aria-checked="false" onclick="toggleTheme()"><span class="theme-switch-knob"></span></button>
       </div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.30 · 2026-09-12 · a sEpp-App</p>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.31 · 2026-09-12 · a sEpp-App</p>
     </div>
   </div>
 </div>
@@ -969,6 +1031,7 @@ function refreshCurrent() {
   else if (tab === 'portfolio') loadPortfolio();
   else if (tab === 'early') loadEarlySignals();
   else if (tab === 'analysis') loadAnalysis();
+  else if (tab === 'value') loadValueSignals();
 }
 
 // ── Scroll-to-Top ─────────────────────────────────────────────────────────
@@ -988,6 +1051,7 @@ function switchTab(name) {
   if (name === 'costs') loadCosts();
   if (name === 'early') loadEarlySignals();
   if (name === 'analysis') loadAnalysis();
+  if (name === 'value') { loadValueSignals(); pollValueStatus(); }
 }
 
 // ── Scan-Status-Polling ───────────────────────────────────────────────────
@@ -1777,6 +1841,15 @@ async function loadConfig() {
   document.getElementById('cfg-es-single-volume-z-min').value = es.single_volume_z_min ?? 6.0;
   document.getElementById('cfg-es-single-buzz-accel-min').value = es.single_buzz_accel_min ?? 3.0;
   document.getElementById('cfg-es-single-13g-pct').value = es.single_large_holder_13g_min_pct ?? 7.0;
+
+  const vl = cfg.value_layer || {};
+  document.getElementById('cfg-vl-enabled').checked = vl.enabled === true;
+  document.getElementById('cfg-vl-mcap-min').value = vl.market_cap_min_usd ?? 50000000;
+  document.getElementById('cfg-vl-pe-max').value = vl.pe_max ?? 20;
+  document.getElementById('cfg-vl-pb-max').value = vl.pb_max ?? 3;
+  document.getElementById('cfg-vl-roe-min').value = vl.roe_min ?? 8;
+  document.getElementById('cfg-vl-debt-equity-max').value = vl.debt_equity_max ?? 1.5;
+  document.getElementById('cfg-vl-top-n').value = vl.top_n ?? 50;
 }
 
 function renderTimes() {
@@ -1836,6 +1909,16 @@ async function saveConfig() {
       single_volume_z_min: +document.getElementById('cfg-es-single-volume-z-min').value,
       single_buzz_accel_min: +document.getElementById('cfg-es-single-buzz-accel-min').value,
       single_large_holder_13g_min_pct: +document.getElementById('cfg-es-single-13g-pct').value,
+    },
+    value_layer: {
+      ..._cfg.value_layer,
+      enabled: document.getElementById('cfg-vl-enabled').checked,
+      market_cap_min_usd: +document.getElementById('cfg-vl-mcap-min').value,
+      pe_max: +document.getElementById('cfg-vl-pe-max').value,
+      pb_max: +document.getElementById('cfg-vl-pb-max').value,
+      roe_min: +document.getElementById('cfg-vl-roe-min').value,
+      debt_equity_max: +document.getElementById('cfg-vl-debt-equity-max').value,
+      top_n: +document.getElementById('cfg-vl-top-n').value,
     },
   };
   await fetch('/sentiment/api/config', { method: 'POST', body: JSON.stringify(cfg) });
@@ -2044,6 +2127,75 @@ async function loadEarlySignals() {
     document.getElementById('es-signals-empty').style.display = 'block';
     document.getElementById('es-signals-empty').textContent = 'Fehler beim Laden.';
   }
+}
+
+// ── Value/Quality-Screening ──────────────────────────────────────────────
+let _valueStatusInterval = null;
+
+async function loadValueSignals() {
+  try {
+    const r = await fetch('/sentiment/api/value-signals');
+    const d = await r.json();
+    const signals = d.signals || [];
+    document.getElementById('value-signals-empty').style.display = signals.length ? 'none' : 'block';
+    document.getElementById('value-signals').innerHTML = signals.map(s => {
+      let det = {};
+      try { det = JSON.parse(s.details_json || '{}'); } catch (e) {}
+      const fmt = (v, digits, suffix) => v == null ? '–' : `${v.toFixed(digits)}${suffix || ''}`;
+      return `<div class="es-alert-card">
+        <div class="es-signal-top">
+          <span class="es-alert-ticker">${esc(s.ticker)}</span>
+          <span class="es-alert-score" title="Kombinierter Value+Quality-Rang (0-100), 100 = am besten unter den gefundenen Kandidaten">${Math.round(s.score)}</span>
+        </div>
+        <div class="es-alert-date">${esDate(s.signal_ts)} · Value ${fmt(det.value_score, 0)} · Quality ${fmt(det.quality_score, 0)} · F-Score ${det.f_score_reduced ?? '–'}/${det.f_score_n_available ?? '–'}</div>
+        <div class="es-signal-detail">KGV ${fmt(det.pe, 1)} · P/B ${fmt(det.pb, 2)} · ROE ${fmt(det.roe, 1, '%')} · Verschuldung ${fmt(det.debt_equity, 2)} · EV/FCF ${fmt(det.ev_fcf, 1)}</div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    document.getElementById('value-signals-empty').style.display = 'block';
+    document.getElementById('value-signals-empty').textContent = 'Fehler beim Laden.';
+  }
+}
+
+async function runValueScan() {
+  try {
+    const r = await fetch('/sentiment/api/value/run', { method: 'POST' });
+    const d = await r.json();
+    if (!d.ok) { alert(d.message || 'Value-Scan konnte nicht gestartet werden.'); return; }
+    startValuePolling();
+  } catch (e) {
+    alert('Fehler beim Starten des Value-Scans.');
+  }
+}
+
+async function pollValueStatus() {
+  try {
+    const r = await fetch('/sentiment/api/value/status');
+    const s = await r.json();
+    const btn = document.getElementById('btn-value-run');
+    const statusEl = document.getElementById('value-status');
+    if (s.running) {
+      btn.disabled = true;
+      const pct = s.total > 0 ? Math.round(s.progress / s.total * 100) : 0;
+      statusEl.textContent = `Läuft… ${pct}% (${s.progress}/${s.total}) → ${s.current_ticker || ''}`;
+      startValuePolling();
+    } else {
+      btn.disabled = false;
+      if (_valueStatusInterval) {
+        clearInterval(_valueStatusInterval);
+        _valueStatusInterval = null;
+        loadValueSignals();
+      }
+      statusEl.textContent = s.finished_at
+        ? `Letzter Lauf: ${esDate(s.finished_at)} · ${s.candidates_found} Kandidaten gefunden`
+        : '';
+    }
+  } catch (e) {}
+}
+
+function startValuePolling() {
+  if (_valueStatusInterval) return;
+  _valueStatusInterval = setInterval(pollValueStatus, 3000);
 }
 
 // ── Wöchentliche Performance-Analyse ────────────────────────────────────────
