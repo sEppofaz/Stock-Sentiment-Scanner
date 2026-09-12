@@ -488,6 +488,14 @@ tr:last-child td{border-bottom:none}
           <span class="cfg-slider"></span>
         </label>
       </div>
+      <div class="cfg-row">
+        <span class="cfg-label">Telegram Top-5-Nachricht (Sentiment-Scan)</span>
+        <label class="cfg-toggle">
+          <input type="checkbox" id="cfg-telegram-top5-enabled">
+          <span class="cfg-slider"></span>
+        </label>
+      </div>
+      <div style="font-size:.72rem;color:var(--muted);padding:0 2px 6px">Scan/Datensammlung laufen unabhängig davon immer weiter – dieser Schalter betrifft nur die tägliche Telegram-Nachricht, die seit 12.09.2026 keine Handlungsgrundlage mehr ist (siehe „Früh"-Info).</div>
     </div>
     <div class="cfg-section">
       <div class="cfg-title">Scan-Zeiten (UTC, Mo–Fr)</div>
@@ -1739,6 +1747,7 @@ async function loadConfig() {
   _scanTimes = cfg.scan_times_utc || [];
   document.getElementById('cfg-scan-enabled').checked = cfg.scan_enabled !== false;
   document.getElementById('cfg-ki-enabled').checked = cfg.ki_enabled === true;
+  document.getElementById('cfg-telegram-top5-enabled').checked = cfg.telegram_top5_enabled === true;
   renderTimes();
   document.getElementById('cfg-bullish-min').value = f.bullish_pct_min;
   document.getElementById('cfg-bearish-max').value = f.bearish_pct_max;
@@ -1793,6 +1802,7 @@ async function saveConfig() {
     ..._cfg,
     scan_enabled: document.getElementById('cfg-scan-enabled').checked,
     ki_enabled: document.getElementById('cfg-ki-enabled').checked,
+    telegram_top5_enabled: document.getElementById('cfg-telegram-top5-enabled').checked,
     scan_times_utc: _scanTimes,
     filter: {
       bullish_pct_min: +document.getElementById('cfg-bullish-min').value,

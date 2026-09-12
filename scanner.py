@@ -826,7 +826,13 @@ def _run_scan_inner(cfg: dict) -> dict:
     else:
         _write_results(output)
         _write_scan_snapshot(output["scanned_at"], top_n)
-        _send_telegram_top5(top_n[:5], len(tickers))
+        # Sentiment-Scan ist seit 2026-09-12 (ADR-022) kein Kaufsignal mehr,
+        # nur noch Datensammlung fuer die Rueckblick-Analyse - die taegliche
+        # Top-5-Nachricht war reine Datensammlungsinfo ohne Handlungsgrundlage
+        # (Josef-Wunsch: nur noch Empfehlungen per Telegram). Default false,
+        # Scan/Snapshot-Schreiben oben bleiben unveraendert aktiv.
+        if cfg.get("telegram_top5_enabled", False):
+            _send_telegram_top5(top_n[:5], len(tickers))
 
     # Portfolio-Quote und Wert aktualisieren – frisch von der Platte laden,
     # da der Scan bis zu 90 Min läuft und in der Zwischenzeit hinzugefügte/
