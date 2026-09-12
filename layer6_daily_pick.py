@@ -1,6 +1,9 @@
-"""Layer 6: Tages-Konsolidierung – höchstens EIN Kauf-Pick pro Handelstag über
-beide Systeme (Frühsignale + Sentiment-Scan) hinweg. Siehe Plan
-atomic-soaring-codd.md (Fable-Gegenprüfung 2026-08-09)."""
+"""Layer 6: Tages-Konsolidierung – höchstens EIN Kauf-Pick pro Handelstag.
+Seit 2026-09-12 standardmäßig nur noch aus Frühsignalen (insider_buy/
+large_holder, siehe early_signals.actionable_types) – der Sentiment-Scan-Pfad
+ist über daily_pick.sentiment_scan_actionable reaktivierbar, aber per Default
+aus (negative Expectancy, siehe CLAUDE.md „70%-Trefferquote-Frage"). Siehe
+Plan atomic-soaring-codd.md (Fable-Gegenprüfung 2026-08-09)."""
 import html
 import json
 import logging
@@ -47,13 +50,14 @@ def _has_cross_signal(ticker: str) -> bool:
     return has_alert and has_snapshot
 
 
-def _distinct_signal_types_recent(ticker: str, days: int = 7) -> int:
+def _distinct_signal_types_recent(ticker: str, actionable: set[str], days: int = 7) -> int:
     """Zählt für C1 (Kombi-Bestätigung), wie viele unterschiedliche
-    Signal-Typen ein Ticker in den letzten `days` Tagen hatte. Ein
-    volume_anomaly bei fallendem Kurs ist kein Kaufhinweis (Fable-Review
-    2026-09-11) und darf hier nicht als bestätigender Typ mitzählen –
-    Signale ohne "direction" (vor dem Fix) werden weiterhin mitgezählt,
-    altern aber binnen `days` Tagen automatisch aus."""
+    AKTIONABLE Signal-Typen ein Ticker in den letzten `days` Tagen hatte
+    (2026-09-12: nur noch insider_buy/large_holder zählen als Kaufsignal,
+    siehe early_signals.actionable_types). Ein volume_anomaly bei fallendem
+    Kurs ist ohnehin kein Kaufhinweis (Fable-Review 2026-09-11) – dieser
+    Filter bleibt zusätzlich bestehen, falls volume_anomaly später wieder
+    in actionable_types aufgenommen wird."""
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT signal_type, details_json FROM signals WHERE ticker=? "
@@ -61,6 +65,8 @@ def _distinct_signal_types_recent(ticker: str, days: int = 7) -> int:
             (ticker, f"-{days} days")).fetchall()
     types = set()
     for r in rows:
+        if r["signal_type"] not in actionable:
+            continue
         if r["signal_type"] == "volume_anomaly":
             d = json.loads(r["details_json"] or "{}")
             if d.get("direction") == "down":
@@ -213,6 +219,12 @@ def _decide_and_store(cfg: dict, pick_date: str, force: bool = False) -> dict:
     repick_cooldown_days = dp.get("repick_cooldown_days", 5)
     min_score_early = dp.get("min_score_early_signals", 5)
     min_score_sentiment = dp.get("min_score_sentiment_scan", 60)
+    actionable_types = set(es.get("actionable_types", ["insider_buy", "large_holder"]))
+    # Sentiment-Scan als Pick-Quelle bewusst deaktivierbar (2026-09-12,
+    # Payoff-Ratio-Analyse: negative Expectancy) - Default false. Block C2/C3
+    # unten wird NICHT entfernt, nur ausgeklammert, damit eine spaetere
+    # Reaktivierung (ADR-022) ohne Code-Aenderung moeglich bleibt.
+    sentiment_scan_actionable = dp.get("sentiment_scan_actionable", False)
 
     if force:
         with get_conn() as conn:
@@ -230,8 +242,10 @@ def _decide_and_store(cfg: dict, pick_date: str, force: bool = False) -> dict:
     # C1/C2 aus heutigen Alerts
     for a in alerts:
         ticker = a["ticker"]
-        confirmed_c1 = a["kind"] == "combo" or _distinct_signal_types_recent(ticker) >= 2
-        cross = _has_cross_signal(ticker)
+        confirmed_c1 = a["kind"] == "combo" or _distinct_signal_types_recent(ticker, actionable_types) >= 2
+        # Cross-Signal braucht einen Snapshot-Kandidaten - unmoeglich, wenn
+        # der Sentiment-Scan-Pfad unten deaktiviert ist. DB-Call sparen.
+        cross = _has_cross_signal(ticker) if sentiment_scan_actionable else False
         if not (confirmed_c1 or cross):
             continue
         cand = candidates.setdefault(ticker, {"ticker": ticker, "alert": None,
@@ -247,25 +261,29 @@ def _decide_and_store(cfg: dict, pick_date: str, force: bool = False) -> dict:
         label = "combo_alert" if a["kind"] == "combo" else "instant_alert"
         cand["confirmations"].append(f"{label} (Score {a['total_score']})")
 
-    # C2/C3 aus heutigen Snapshots
-    for s in snapshots:
-        ticker = s["ticker"]
-        cross = _has_cross_signal(ticker)
-        confirmed_c3 = (s.get("rank") or 999) <= 5 and (s.get("bullish_pct") or 0) >= 70
-        if not (cross or confirmed_c3):
-            continue
-        cand = candidates.setdefault(ticker, {"ticker": ticker, "alert": None,
-                                               "snapshot": None, "confirmations": []})
-        if cand.get("snapshot") is None or (s.get("rank") or 999) < (cand["snapshot"].get("rank") or 999):
-            cand["snapshot"] = s
-        if cross:
-            cand["source"] = "cross_signal"
-            if "cross_signal (auch bei Frühsignalen)" not in cand["confirmations"]:
-                cand["confirmations"].append("cross_signal (auch bei Frühsignalen)")
-        elif "source" not in cand:
-            cand["source"] = "sentiment_scan"
-        if confirmed_c3:
-            cand["confirmations"].append(f"Sentiment-Scan Rang {s.get('rank')}, Bullish {s.get('bullish_pct')}%")
+    # C2/C3 aus heutigen Snapshots - nur wenn Sentiment-Scan als Pick-Quelle
+    # reaktiviert ist (daily_pick.sentiment_scan_actionable). Block bewusst
+    # NICHT entfernt, nur ausgeklammert (2026-09-12) - Reversibilitaet, falls
+    # Josef das spaeter mit mehr gereiften Daten neu bewertet (ADR-022).
+    if sentiment_scan_actionable:
+        for s in snapshots:
+            ticker = s["ticker"]
+            cross = _has_cross_signal(ticker)
+            confirmed_c3 = (s.get("rank") or 999) <= 5 and (s.get("bullish_pct") or 0) >= 70
+            if not (cross or confirmed_c3):
+                continue
+            cand = candidates.setdefault(ticker, {"ticker": ticker, "alert": None,
+                                                   "snapshot": None, "confirmations": []})
+            if cand.get("snapshot") is None or (s.get("rank") or 999) < (cand["snapshot"].get("rank") or 999):
+                cand["snapshot"] = s
+            if cross:
+                cand["source"] = "cross_signal"
+                if "cross_signal (auch bei Frühsignalen)" not in cand["confirmations"]:
+                    cand["confirmations"].append("cross_signal (auch bei Frühsignalen)")
+            elif "source" not in cand:
+                cand["source"] = "sentiment_scan"
+            if confirmed_c3:
+                cand["confirmations"].append(f"Sentiment-Scan Rang {s.get('rank')}, Bullish {s.get('bullish_pct')}%")
 
     survivors = []
     for ticker, cand in candidates.items():

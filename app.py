@@ -188,6 +188,17 @@ def _validate_cfg(cfg) -> str | None:
     if "trailing_stop" in cfg and not isinstance(cfg["trailing_stop"], dict):
         return "trailing_stop muss ein Objekt sein"
 
+    es = cfg.get("early_signals", {})
+    if isinstance(es, dict) and "actionable_types" in es:
+        at = es["actionable_types"]
+        if not (isinstance(at, list) and all(isinstance(t, str) for t in at)):
+            return "early_signals.actionable_types muss eine Liste von Strings sein"
+
+    dp = cfg.get("daily_pick", {})
+    if isinstance(dp, dict) and "sentiment_scan_actionable" in dp and not isinstance(
+            dp["sentiment_scan_actionable"], bool):
+        return "daily_pick.sentiment_scan_actionable muss ein Bool sein"
+
     return None
 
 

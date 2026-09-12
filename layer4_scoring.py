@@ -123,6 +123,13 @@ def run_scoring(cfg: dict) -> None:
     min_score = es.get("alert_min_score", 4)
     min_types = es.get("alert_min_types", 2)
     cooldown = es.get("alert_cooldown_days", 7)
+    # Nur noch insider_buy/large_holder loesen Alerts aus (2026-09-12,
+    # Payoff-Ratio-Analyse: Sentiment-Scan/volume_anomaly/buzz_accel haben
+    # negative Expectancy). Config-getrieben statt hart verdrahtet, damit
+    # eine spaetere Reaktivierung (mehr Daten) nur einen Config-Wert braucht,
+    # keinen Code-Change. Rohsignal-Erzeugung (layer2/layer3) laeuft
+    # unveraendert weiter - nur diese Bewertungsschicht filtert.
+    actionable = set(es.get("actionable_types", ["insider_buy", "large_holder"]))
 
     with get_conn() as conn:
         rows = conn.execute(
@@ -134,6 +141,7 @@ def run_scoring(cfg: dict) -> None:
 
     created = []
     for ticker, sigs in by_ticker.items():
+        sigs = [s for s in sigs if s["signal_type"] in actionable]
         types = {s["signal_type"] for s in sigs}
         if len(types) < min_types:
             continue
@@ -193,6 +201,7 @@ def check_instant_alerts(cfg: dict) -> None:
     holder_13g_min_pct = es.get("single_large_holder_13g_min_pct", 7.0)
     cooldown = es.get("alert_cooldown_days", 7)
     max_per_day = es.get("max_instant_alerts_per_day", 5)
+    actionable = set(es.get("actionable_types", ["insider_buy", "large_holder"]))
 
     with get_conn() as conn:
         rows = conn.execute(
@@ -201,6 +210,8 @@ def check_instant_alerts(cfg: dict) -> None:
 
     candidates = []
     for r in rows:
+        if r["signal_type"] not in actionable:
+            continue
         d = json.loads(r["details_json"] or "{}")
         if r["signal_type"] == "insider_buy":
             strong = bool(d.get("cluster")) or d.get("total_usd", 0) >= ins_min
