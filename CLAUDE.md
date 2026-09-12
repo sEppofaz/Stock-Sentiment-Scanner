@@ -525,6 +525,8 @@ Direkter Anschluss an die 70%-Trefferquote-Frage: Josef entschied nach kurzer Di
 - **Getestet:** isolierte Logik-Tests mit synthetischer SQLite-DB gegen die echten importierten Funktionen (Kombi-Filter reduziert `types` korrekt, Instant-Alert-Filter blockt volume_anomaly/buzz_accel bei weiterhin funktionierendem insider_buy/large_holder, Distinct-Type-Zählung, Daily-Pick-Gating in beide Richtungen inkl. Cross-Signal-Pfad ohne Crash, fehlende Config-Keys crashen nicht), `python3 -m py_compile`, JS-Syntax per JavaScriptCore (kein Node lokal installiert) geprüft.
 - **Bekannte Lücke:** Chrome-Extension war in der Session nicht verbunden – keine visuelle Browser-Verifikation der PWA-Änderungen möglich (nur Backend live gegen die echte DB getestet). PKA-Todo angelegt.
 
+**Direkter Nachtrag (gleicher Tag):** Josef – „nur Empfehlungen per Telegram, keine Datensammlungsinfos". Neuer Config-Key `telegram_top5_enabled` (Default `false`) gated `_send_telegram_top5()` in `scanner.py` – die tägliche Sentiment-Scan-Top-5-Nachricht war nie ein Kaufsignal-Pfad, aber reine Information, die nach ADR-022 nicht mehr gebraucht wird. Scan/`results.json`/`scan_snapshots` (Datensammlung für die Rückblick-Analyse) bleiben unverändert aktiv, nur die Telegram-Nachricht entfällt. PWA-Settings-Tab bekommt einen Toggle (analog `scan_enabled`/`ki_enabled`), falls Josef sie später wieder will. **Bewusst NICHT abgeschaltet** (nach Rückfrage): Claude-API-Kosten-Alerts (sicherheitsrelevant) und die wöchentliche Performance-Zusammenfassung (selten, methodisch wertvoll, kein Rauschen).
+
 ## tickers.csv erneuern (quartalsweise)
 
 ```bash
