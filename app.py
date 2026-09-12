@@ -188,6 +188,11 @@ def _validate_cfg(cfg) -> str | None:
     if "trailing_stop" in cfg and not isinstance(cfg["trailing_stop"], dict):
         return "trailing_stop muss ein Objekt sein"
 
+    # value_layer analog early_signals nur auf Typ geprüft (nicht auf einzelne
+    # Schlüssel) - _reschedule() greift direkt mit .get("enabled", False) darauf zu
+    if "value_layer" in cfg and not isinstance(cfg["value_layer"], dict):
+        return "value_layer muss ein Objekt sein"
+
     es = cfg.get("early_signals", {})
     if isinstance(es, dict) and "actionable_types" in es:
         at = es["actionable_types"]
@@ -350,6 +355,17 @@ def _reschedule():
             timezone="America/New_York", id="sell_signal_check",
         )
 
+    # Layer 7: Value/Quality-Screening (fundamentale Unterbewertung). Bewusst
+    # NICHT im werktäglichen Minuten-Raster: Fundamentaldaten ändern sich nicht
+    # untertägig, und ein Scan über alle ~4.700 Ticker braucht beim
+    # gemeinsamen 55-Calls/Min-Throttle selbst ~85 Minuten – am Samstag läuft
+    # kein anderer Finnhub-Job (alle sind mon-fri), also kein Throttle-Konflikt.
+    if cfg.get("value_layer", {}).get("enabled", False):
+        scheduler.add_job(
+            _do_value_scan, "cron", hour=6, minute=0,
+            day_of_week="sat", timezone="UTC", id="value_scan",
+        )
+
     log.info(
         "Scan-Zeiten: %s (Mo–Fr UTC) + Portfolio-Scan alle 15 Min :12/:27/:42/:57 America/New_York (gestaffelt ggü. EDGAR-Jobs)",
         cfg.get("scan_times_utc"),
@@ -493,6 +509,17 @@ def _do_scan_tracker():
         run_scan_tracker(_load_cfg())
     except Exception:
         log.exception("Scan-Tracker fehlgeschlagen")
+
+
+def _do_value_scan():
+    cfg = _load_cfg()
+    if not cfg.get("value_layer", {}).get("enabled", False):
+        return
+    try:
+        from layer7_value import run_value_scan
+        run_value_scan(cfg)
+    except Exception:
+        log.exception("Value-Scan fehlgeschlagen")
 
 
 def _do_weekly_analysis():
@@ -1020,6 +1047,47 @@ def api_early_signals():
             "SUM(CASE WHEN ret_pct > 0 THEN 1 ELSE 0 END)*100.0/COUNT(*) hit_rate "
             "FROM forward_returns WHERE ret_pct IS NOT NULL GROUP BY horizon_days")]
     return jsonify({"signals": signals, "alerts": alerts, "stats": stats})
+
+
+@app.route("/sentiment/api/value-signals")
+@login_required
+def api_value_signals():
+    from signals_db import get_conn
+    with get_conn() as conn:
+        signals = [dict(r) for r in conn.execute(
+            "SELECT ticker, signal_type, signal_ts, score, details_json FROM signals "
+            "WHERE signal_type='value' ORDER BY signal_ts DESC, score DESC LIMIT 100")]
+    return jsonify({"signals": signals})
+
+
+@app.route("/sentiment/api/value/run", methods=["POST"])
+@login_required
+def api_value_run():
+    # Läuft über alle ~4.700 Ticker (~85 Min) - wie /api/scan im Hintergrund-
+    # Thread starten, sonst würde der HTTP-Request/Reverse-Proxy timeouten.
+    from layer7_value import VALUE_SCAN_STATUS
+    from scanner import SCAN_STATUS
+    if VALUE_SCAN_STATUS.get("running"):
+        return jsonify({"ok": False, "message": "Value-Scan läuft bereits"}), 409
+    if SCAN_STATUS.get("running"):
+        return jsonify({"ok": False, "message": "Voller Scan läuft noch (gleicher Finnhub-Throttle)"}), 409
+
+    def _run():
+        try:
+            from layer7_value import run_value_scan
+            run_value_scan(_load_cfg())
+        except Exception:
+            log.exception("Manueller Value-Scan fehlgeschlagen")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True, "message": "Value-Scan gestartet (Hintergrund, ca. 85 Min)"})
+
+
+@app.route("/sentiment/api/value/status")
+@login_required
+def api_value_status():
+    from layer7_value import VALUE_SCAN_STATUS
+    return jsonify(VALUE_SCAN_STATUS)
 
 
 # ── API: Wöchentliche Performance-Analyse ──────────────────────────────────────

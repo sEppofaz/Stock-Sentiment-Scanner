@@ -10,7 +10,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS signals (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     ticker        TEXT NOT NULL,
-    signal_type   TEXT NOT NULL,      -- 'insider_buy' | 'volume_anomaly' | 'buzz_accel'
+    signal_type   TEXT NOT NULL,      -- 'insider_buy' | 'volume_anomaly' | 'buzz_accel' | 'large_holder' | 'value'
     signal_ts     TEXT NOT NULL,      -- ISO 8601, UTC
     score         REAL,
     details_json  TEXT,
