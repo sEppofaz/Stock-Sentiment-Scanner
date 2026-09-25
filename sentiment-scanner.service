@@ -7,7 +7,14 @@ User=webhook
 Group=webhook
 WorkingDirectory=/opt/sentiment-scanner
 EnvironmentFile=/etc/pka/secrets.env
-ExecStart=/opt/sentiment-scanner/venv/bin/python3 app.py
+# gunicorn statt Flask-Dev-Server (2026-09-25).
+# -w 1 ist PFLICHT, nicht Geschmack: app.py startet auf Modulebene einen
+# APScheduler BackgroundScheduler (scheduler.start()). Jeder weitere Worker
+# waere ein zweiter Scheduler -> doppelte Scans, doppelte API-Kosten.
+# Kein --preload: sonst startet der Scheduler im Master vor dem Fork.
+ExecStart=/opt/sentiment-scanner/venv/bin/gunicorn -w 1 --threads 8 -k gthread \
+    -b 127.0.0.1:5005 --timeout 120 --graceful-timeout 30 \
+    --access-logfile - --error-logfile - app:app
 Restart=always
 RestartSec=10
 StandardOutput=journal

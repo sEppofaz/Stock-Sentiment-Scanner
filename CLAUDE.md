@@ -127,7 +127,7 @@ Manueller Umschalter im Info-Sheet ergänzt (überschreibt `prefers-color-scheme
 
 ## Pitfalls
 
-- **⚠️ Flask-Bindung war auf `0.0.0.0` statt `127.0.0.1` (gefunden + gefixt 2026-08-21):** `app.run(host=...)` lauschte auf allen Interfaces statt nur localhost – abweichend vom Muster aller anderen Flask-Apps hier (nginx proxied ohnehin nur gegen `127.0.0.1:5005`, s.o.). War nur durch UFW-Default-Deny auf Port 5005 abgesichert, kein explizites Nginx-only-Pattern. Fix: `host="127.0.0.1"`. Verifiziert: `ss -tlnp` zeigt jetzt `127.0.0.1:5005` statt `0.0.0.0:5005`, direkter externer Zugriff auf Port 5005 schlägt fehl, `/sentiment/` über nginx funktioniert weiterhin. **Läuft weiterhin über Flasks eingebauten Dev-Server** (nicht gunicorn wie die anderen Apps) – bewusst noch nicht migriert, da der eingebaute `apscheduler` (Scans alle 15 Min) bei mehreren gunicorn-Workern mehrfach parallel laufen würde (Duplikate/Mehrkosten) – bräuchte `-w 1` oder Scheduler-Auslagerung, siehe PKA-Todo.
+- **⚠️ Flask-Bindung war auf `0.0.0.0` statt `127.0.0.1` (gefunden + gefixt 2026-08-21):** `app.run(host=...)` lauschte auf allen Interfaces statt nur localhost – abweichend vom Muster aller anderen Flask-Apps hier (nginx proxied ohnehin nur gegen `127.0.0.1:5005`, s.o.). War nur durch UFW-Default-Deny auf Port 5005 abgesichert, kein explizites Nginx-only-Pattern. Fix: `host="127.0.0.1"`. Verifiziert: `ss -tlnp` zeigt jetzt `127.0.0.1:5005` statt `0.0.0.0:5005`, direkter externer Zugriff auf Port 5005 schlägt fehl, `/sentiment/` über nginx funktioniert weiterhin. **✅ Seit 2026-09-25 auf gunicorn** (`-w 1 --threads 8 -k gthread`, siehe Abschnitt „gunicorn“ unten) – der Dev-Server ist damit weg.
 - **`/news-sentiment` ist KEIN Free-Tier-Endpoint** → gibt 403 zurück → stattdessen `/company-news` verwenden
 - **Sentiment-Quelle:** `/company-news` (7d, Headline + Summary) + Keyword-Scoring (BULLISH_WORDS / BEARISH_WORDS in scanner.py)
 - **Buzz-Definition:** `buzz = Artikelanzahl / 3.0` (3 Artikel/Woche = 1,0 = "normal") – kein Finnhub-Jahresdurchschnitt mehr
@@ -238,7 +238,7 @@ Vollständiger unabhängiger Code-Review (4 kritisch, 9 mittel, 10 gering). K4 (
 - **G4 Buzz-Median verzerrt:** `_news_flat()` bildete den Median nur über Tage MIT Artikeln (buzz_history speichert keine 0-Zeilen) → Median systematisch zu hoch, Filter zu permissiv. Fix: Median jetzt über alle 30 Kalendertage (fehlende Tage = 0).
 - **G7 forward_tracker:** Bis zu 3 identische `yf.download()`-Calls pro Alert (einer je Horizont) + tote `forward_returns`-Zeilen bei `price_at_alert IS NULL` (können nie gefüllt werden). Fix: nach `(ticker, alert_id)` gruppiert (ein Download pro Alert), `layer4_scoring.py` legt keine Zeilen mehr an wenn kein Preis geholt werden konnte.
 - **G8 `api_portfolio_add`:** `float()` auf Garbage-Input warf 500 statt 400. Fix: `try/except` mit sauberer 400-Antwort.
-- **G9 Gunicorn-Falle (neu dokumentiert):** `scheduler.start()` + `init_db()` laufen auf Modulebene in `app.py`. Aktuell unkritisch (`python3 app.py` direkt im systemd-Unit, kein Multi-Worker). **Bei künftigem Wechsel auf gunicorn mit >1 Worker würden alle Scheduler-Jobs mehrfach laufen** (doppelte Scans, doppelte Telegram-Alerts) – vorher WSGI-Server-Wechsel hier eintragen und Guard einbauen (z.B. nur in Worker 0 starten).
+- **G9 Gunicorn-Falle (eingetreten und entschärft 2026-09-25):** `scheduler.start()` + `init_db()` laufen auf Modulebene in `app.py`. Seit dem Wechsel auf gunicorn hält **`-w 1`** das im Griff – **jeder zusätzliche Worker wäre ein zweiter Scheduler** und damit doppelte Scans und doppelte API-Kosten. Ein `--preload` hätte denselben Effekt über den Master. Wer hier hochskalieren will, muss den Scheduler vorher aus dem Web-Prozess herauslösen (eigener systemd-Timer oder eigener Service), nicht die Worker-Zahl erhöhen. **Verifikation nach jedem Deploy:** `journalctl -u sentiment-scanner --since "1 min ago" | grep -c "Scan-Zeiten"` muss **1** ergeben.
 - **G10 Server-Lokalzeit bei `_day_counts` (neu dokumentiert):** `_fetch_sentiment()` nutzt `date.fromtimestamp(...)` (scanner.py) → Server-Lokalzeit (Europe/Berlin), nicht UTC oder US-Handelstag. US-Abendnews (nach 18 Uhr ET) rutschen auf den Berliner Folgetag in `buzz_history`. In sich konsistent (Layer 3 rechnet mit derselben Zeitbasis), aber „Handelstag"-Semantik ist gegenüber ET verschoben – bewusst nicht geändert (Breaking Change für bestehende buzz_history-Daten), nur dokumentiert.
 - **Pitfall yfinance:** `yf.download(tickers=[...], group_by="ticker")` liefert bei Listen- UND bei Einzel-String-Übergabe IMMER MultiIndex-Spalten. Bei Liste: `data[sym]["Volume"]` (auch bei 1 Ticker im Chunk). Bei Einzel-Ticker-String (kein `group_by`, wie im Forward-Tracker): `hist["Close"]` ist ein **DataFrame**, nicht Series → `hist["Close"][ticker]` nötig, sonst crasht `float(...)` für jeden Ticker (verifiziert 2026-07-06, Spec hatte hier einen Fehler). **Seit 2026-08-06 zentral in `yf_helper.fetch_closes()`** (ADR-010) – `forward_tracker.py` und `scan_tracker.py` nutzen beide diese eine Stelle, ein künftiger Fix muss nicht mehr an zwei Stellen gepflegt werden.
 - `_day_counts` (wie `_news_texts`) nie persistieren – wird vor results.json/portfolio.json gestrippt
@@ -554,3 +554,31 @@ systemctl restart sentiment-scanner
 ## SW-Cache
 
 Name: `sentiment-v1` – bei Änderungen an manifest.json oder sw.js selbst hochzählen.
+
+---
+
+## gunicorn (seit 2026-09-25)
+
+```ini
+ExecStart=/opt/sentiment-scanner/venv/bin/gunicorn -w 1 --threads 8 -k gthread \
+    -b 127.0.0.1:5005 --timeout 120 --graceful-timeout 30 \
+    --access-logfile - --error-logfile - app:app
+```
+
+Ersetzt `python3 app.py` (Flask-Dev-Server). `gunicorn` war im venv bereits vorhanden.
+Gleiche Entscheidung und Begründung wie bei rename-webhook – die verworfenen Alternativen
+stehen in `Vereinskalender/ADR/ADR-010-gunicorn-ein-worker.md`.
+
+### ⚠️ `-w 1` und kein `--preload` sind hier zwingend
+
+`scheduler.start()` steht auf Modulebene (`app.py`, ca. Zeile 563). gunicorn importiert die
+App **pro Worker**, ein zweiter Worker wäre also ein zweiter BackgroundScheduler: doppelte
+Scans alle 15 Minuten, doppelte API-Kosten, doppelte Telegram-Alerts. Mit `--preload` liefe
+der Scheduler im Master **vor** dem Fork und würde ihn nicht sauber überleben.
+
+### ⚠️ Die Unit-Datei liegt auch im Repo
+
+`sentiment-scanner.service` ist eingecheckt und der Deploy kopiert sie nach
+`/etc/systemd/system/`. Eine Änderung nur auf dem Server wird beim nächsten Deploy
+überschrieben – **immer beide Stellen** ändern. Server-Backup der Vorversion:
+`/root/unit-backup-sentiment-scanner-*`.
