@@ -582,3 +582,7 @@ der Scheduler im Master **vor** dem Fork und würde ihn nicht sauber überleben.
 `/etc/systemd/system/`. Eine Änderung nur auf dem Server wird beim nächsten Deploy
 überschrieben – **immer beide Stellen** ändern. Server-Backup der Vorversion:
 `/root/unit-backup-sentiment-scanner-*`.
+
+## Dark-/Hell-Modus-Umschalter – Position (2026-09-26)
+
+Der Umschalter steht im Info-Sheet **direkt hinter dem Einleitungsabschnitt**, vor allen weiteren Hilfeeinträgen – verbindliche Vorgabe aus `PKA/BKM/PWA-Standards.md` (vorher stand er unten neben Version/Schließen). Beim Umbauen des Info-Sheets die Position beibehalten.
