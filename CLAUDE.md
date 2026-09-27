@@ -75,12 +75,15 @@ location /sentiment/ {
 ├── layer6_sell_signal.py   # Verkaufssignal aus Frühsignal-Gegensignalen, nur für echte Positionen
 ├── forward_tracker.py  # füllt forward_returns (Frühsignal-Alerts, 1/5/20 Handelstage)
 ├── scan_tracker.py     # füllt scan_forward_returns (Sentiment-Scan-Snapshots, 1/5/20 Handelstage)
-├── yf_helper.py         # gemeinsamer yfinance-Zugriff für beide Tracker (ADR-010)
+├── value_tracker.py    # füllt value_forward_returns (Layer-7-Value-Signale, 60/120/250 Handelstage)
+├── layer7_value.py     # Value/Quality-Screening (samstags, eigener Signaltyp 'value')
+├── ts_backtest.py      # Trailing-Stop-Backtest (ADR-024, quartalsweise wiederholen, nur yfinance)
+├── yf_helper.py         # gemeinsamer yfinance-Zugriff für alle drei Tracker (ADR-010)
 ├── weekly_analysis.py   # wöchentliche Performance-Analyse (regelbasiert + optionaler KI-Button)
 ├── config.json         # editierbar per PWA (keine Credentials!)
 ├── tickers.csv         # Russell 2000 Ticker (gitignored, quartalsweise neu laden)
 ├── results.json        # letztes Scan-Ergebnis (gitignored)
-├── signals.db           # SQLite: signals/alerts/forward_returns + scan_snapshots/scan_forward_returns/weekly_reports (gitignored, WAL)
+├── signals.db           # SQLite: signals/alerts/forward_returns + scan_snapshots/scan_forward_returns + value_forward_returns/weekly_reports (gitignored, WAL)
 ├── claude_costs.json   # kumulative Claude API Kosten (gitignored, wird automatisch angelegt)
 ├── portfolio.json      # persönliche Portfolio-Einträge (gitignored – enthält Kaufpreise!)
 ├── scan.log            # Protokoll (gitignored)
@@ -88,7 +91,7 @@ location /sentiment/ {
 ├── requirements.txt
 ├── fetch_tickers.py    # Finnhub /stock/symbol?exchange=US → tickers.csv (quartalsweise)
 └── pwa/
-    ├── index.html      # 4 Tabs: Dashboard, Portfolio, Früh, Analyse (Einstellungen + Kosten als Header-Icons, seit 2026-08-09)
+    ├── index.html      # 5 Tabs: Dashboard, Portfolio, Früh, Analyse, Value (Einstellungen + Kosten als Header-Icons, seit 2026-08-09)
     ├── login.html      # Flask-Session-Login (seit 2026-08-09, ADR-015), öffentlich erreichbar
     ├── manifest.json
     └── sw.js
@@ -541,6 +544,39 @@ Josefs Anschlussfrage nach Fables Payoff-Analyse (siehe oben): Ideen für automa
 - **Getestet:** (1) Offline-Logiktest mit den 5 echten Finnhub-Ticker-Antworten – korrekte Ausschlüsse (GPRO via Distress-Veto), plausible Rangfolge (KSS vorn, AAPL trotz Top-ROE hinten wegen hoher Bewertung). (2) Live-Smoke-Test auf dem Server mit 10 Tickern über den echten Finnhub-Key (server-seitig aus `secrets.env` gelesen, nie ausgegeben) – 8/10 Kandidaten, Ranking ergab KSS/M/BBY/T/INTC vorn, AAPL hinten, `insert_signal()` schrieb korrekt in `signals.db`. Test-Zeilen danach wieder gelöscht (kein reales `pe_max`/`roe_min`-Filterset verwendet, daher nicht repräsentativ für Produktionswerte). (3) Kill-Switch-Test: Service-Neustart nach Deploy ohne `value_scan`-Job in der Jobliste bestätigt.
 - **PWA-Tab „Value" (v1.31, gleicher Tag):** 5. Tab (`screen-value`) mit manuellem Scan-Trigger (`btn-value-run` → `/api/value/run`, Hintergrund-Thread wie `/api/scan` – sonst Request-Timeout bei ~85 Min) + Status-Polling (`pollValueStatus()` gegen `/api/value/status`, analog `pollScanStatus()`) + Signal-Liste (`loadValueSignals()` gegen `/api/value-signals`). Eigener Tab statt Erweiterung des Früh-Tabs (unterschiedliche Zeithorizonte/Semantik, siehe oben). Einstellungen-Block `cfg-vl-*` mit korrektem `..._cfg.value_layer`-Spread in `saveConfig()` (ADR-022-Regressionsmuster von Anfang an vermieden). Info-Sheet-Abschnitt „Value-Layer" ergänzt.
 - **Noch offen (nicht Teil dieser Phase):** Langzeit-Tracker (`value_tracker.py`, Horizonte 60/120/250 Handelstage statt der bestehenden 1/5/20 – Value-Picks brauchen Monate, nicht Tage), echter Vollscan über alle ~4.700 Ticker (bisher nur 10-Ticker-Smoke-Test), visuelle Browser-Verifikation des neuen Tabs (Chrome-Extension in dieser Session nicht genutzt).
+
+## Layer 7: Langzeit-Tracker + Vollscan-Verifikation (2026-09-27, v1.33)
+
+Abarbeitung der drei offenen Punkte aus dem Layer-7-Abschnitt oben.
+
+- **Vollscan war bereits verifiziert – durch den Regelbetrieb, nicht durch einen Testlauf.** `value_layer.enabled` stand auf dem Server schon auf `true`, der Samstags-Job ist am **2026-09-19 und 2026-09-26** jeweils komplett durchgelaufen: Laufzeit **je ~86 Minuten** (06:00→07:26 UTC, exakt wie beim Entwurf geschätzt), **0 Finnhub-Fehler**, **587 bzw. 591 Kandidaten** nach Filter von ~4.700 Tickern, je 50 Signale gespeichert. Kein manueller Testlauf nötig. **Lehre:** vor dem Nachstellen eines Tests erst prüfen, ob der Regelbetrieb die Antwort schon geliefert hat (`journalctl` + Zeitstempel in `signals`).
+- **`value_tracker.py` (neu):** füllt die neue Tabelle `value_forward_returns` mit den Horizonten **60/120/250 Handelstagen** (≈ 3/6/12 Monate) statt der 1/5/20 der anderen beiden Tracker – über 20 Tage würde man bei Value-Picks fast nur Marktrauschen messen. Ansonsten strikt nach dem Muster `forward_tracker.py`/`scan_tracker.py` (Referenzkurs immer frisch aus `closes.iloc[0]` derselben split-bereinigten Reihe, IWM/SPY-Benchmark pro Startdatum gecacht).
+  - **Zeilen legt nicht der Scan an, sondern `ensure_rows()` beim Tracker-Lauf** (LEFT JOIN über `signals`). Dadurch greift der Tracker rückwirkend auf die Signale vom 12./19./26.09., ohne Backfill-Skript – anders als bei `scan_forward_returns`, wo `insert_scan_snapshots()` die Zeilen direkt mitschreibt.
+  - **Zwei Altersgrenzen, beide aus Effizienzgründen:** Signale unter `_MIN_AGE_CAL_DAYS` (84) werden übersprungen (nicht einmal der kürzeste Horizont kann reif sein, der Download wäre garantiert vergeblich); Signale über `_MAX_AGE_CAL_DAYS` (500) endgültig aufgegeben. Ohne die zweite Grenze würde jeder delistete Ticker mit dauerhaft leerer Kursreihe Woche für Woche erneut geladen – **im Logiktest aufgefallen, nicht im Betrieb**. Dieselbe Schwäche haben `forward_tracker.py`/`scan_tracker.py` weiterhin (dort durch die kurzen Horizonte weniger relevant).
+  - **Scheduler:** `value_tracker`-Job **samstags 09:00 UTC**, nur wenn `value_layer.enabled` (analog `es_tracker` unter `early_signals.enabled` – ein deaktivierter Layer friert damit auch seine Auswertung ein). Wöchentlich statt täglich: bei Monats-Horizonten würde ein täglicher Lauf nur dieselben unreifen Signale erneut herunterladen. 09:00 UTC liegt sicher nach dem Value-Scan (06:00 + ~86 Min) und nutzt ohnehin nur yfinance.
+- **`analyze_value_performance()` + `/api/value/performance` (GET, login_required):** Trefferquote/Median/Payoff-Ratio/Expectancy je Horizont plus IWM-Vergleich. Methodik wie `weekly_analysis` (Median statt Mittelwert, Dedup überlappender Fenster), aber **bewusst nicht mit Sentiment-/Frühsignal-Zahlen zusammengerechnet** – der Layer soll eigene Evidenz aufbauen (ADR-023/ADR-022-Lehre). Reine SQL-/Statistikabfrage, kein yfinance-/Finnhub-Call, keine Kosten.
+  - **Dedup-Fenster in Kalendertagen, nicht in Handelstagen:** `_DEDUPE_CAL_DAYS = {60: 84, 120: 168, 250: 350}`. `weekly_analysis._dedupe_overlapping()` vergleicht Kalender-Differenzen; mit dem rohen Horizontwert (wie dort für 20 Tage) blieben die Fenster überlappend. Beim Value-Layer wiegt das schwerer als bei den anderen Layern, weil derselbe Ticker samstags für samstags erneut als Kandidat auftaucht (z.B. IMPP in allen drei Läufen).
+- **PWA v1.33:** Value-Tab bekommt oberhalb der Top-Kandidaten den Block „Langzeit-Performance" (drei Karten im bestehenden `es-stats-grid`-Muster + Zusatzzeile mit Payoff/Expectancy/IWM). Info-Sheet-Abschnitt „Value-Layer" um einen Absatz zur Langzeit-Auswertung ergänzt.
+- **Getestet:** 20 Prüfungen mit synthetischer In-Memory-SQLite-DB und gefälschtem `fetch_closes()` gegen die echten importierten Funktionen (Zeilenanlage + Idempotenz, Rendite-/Benchmark-Berechnung gegen handgerechnete Werte, nur-`value`-Signale getrackt, fehlende Kursdaten übersprungen, beide Altersgrenzen, Dedup, `pending`-Zählung) – alle bestanden. Live gegen die echte `signals.db` als User `webhook` ausgeführt: 450 Zeilen angelegt, 0 gefüllt, 450 korrekt als „zu jung" übersprungen. Scheduler-Job nach Deploy in der Jobliste bestätigt, Endpoint antwortet ohne Login mit 302.
+- **Erwartung:** Erste gefüllte 60-Tage-Werte **ab Anfang Dezember 2026** (Signale ab 12.09. + 84 Kalendertage). Bis dahin zeigt der Tab bewusst „0 ausgewertet · 150 offen" – das ist kein Fehler.
+
+## Trailing-Stop-Backtest: Parameter bleibt bei 15% (2026-09-27, ADR-024)
+
+Fable-Empfehlung (4) vom 2026-09-11 („Exit-Regeln verschärfen statt an Einstiegssignalen drehen") **geprüft und vorläufig nicht umsetzbar** – nicht umgesetzt. Details/verworfene Alternativen: `ADR-024`.
+
+- **`ts_backtest.py` (neu, im Repo statt als Wegwerf-Skript):** simuliert Trailing-Stops von 5–30% gegen „Halten bis Horizont-Ende" auf den aktionablen Signalen. Ein yfinance-Download je Ticker (nicht je Ticker+Datum wie die Tracker), ~3–5 Min Laufzeit, schreibt nichts in `signals.db`.
+- **Gepooltes Ergebnis wirkt eindeutig** (n=207, deduplizierte `insider_buy`-Fälle, h=20): TS 5% Expectancy +1,71% vs. Halten −0,14%, monoton fallend bis TS 20% (−1,68%). **Der heutige Default 15% liegt mit −0,63% im schlechten Feld.**
+- **Zwei Gegenprüfungen zerlegen das:** (1) Bei Halbierung der Stichprobe nach Signaldatum **kippt die Rangfolge komplett** – in der ersten Hälfte ist *Halten* mit +1,54% die beste Variante und TS 15% besser als TS 10%/12%. (2) TS 5% löst in **94%** der Fälle aus; bei realistischen 1–2% Slippage auf Microcaps bleibt von +1,71% nur +0,91% bzw. +0,18%.
+- **Konsequenz:** keine Parameteränderung. Skript quartalsweise erneut laufen lassen; eine Anpassung ist erst datengestützt, wenn die Rangfolge über mindestens zwei Marktregime stabil bleibt.
+- **Nebenbefund, bestätigt ADR-022 ein zweites Mal** (Stand 27.09., h=20, dedupliziert): nur `insider_buy` n=54, Trefferquote 55,6%, **markt-relativ 64,8%**, Expectancy +0,71%. `insider_buy` *in Kombination* mit anderen Typen: n=122, Expectancy **−1,70%**. Nur `volume_anomaly`: n=175, Expectancy **−14,13%**. Die additive Kombination verwässert messbar – genau die Annahme, auf der ADR-022 beruht.
+
+## Wichtige Regel: `ts_backtest.py` und Backtests generell
+
+Jeder Backtest auf dieser Datenbasis braucht **beide** Gegenprüfungen, sonst ist das Ergebnis nicht interpretierbar:
+1. **Zeitstabilität** – Stichprobe nach Datum halbieren. Kippt die Rangfolge, beschreibt das Ergebnis das Marktregime, nicht die Regel.
+2. **Slippage** – bei Regeln, die häufig auslösen, ist die Ausführungsannahme entscheidend. Auf Microcaps (50 Mio.–2 Mrd. $) sind 1–2% realistisch.
+
+Die Stichprobe ist zu klein und zu kurz (Zeitraum ab Juli 2026, ein Marktregime), um Parameter zu optimieren. Ergebnisse ohne diese zwei Spalten haben in der Vergangenheit dreimal zu falschen Schlüssen geführt (ADR-019, Reverify-Fund 2026-09-11, jetzt ADR-024).
 
 ## tickers.csv erneuern (quartalsweise)
 
