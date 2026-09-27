@@ -578,6 +578,25 @@ Jeder Backtest auf dieser Datenbasis braucht **beide** Gegenprüfungen, sonst is
 
 Die Stichprobe ist zu klein und zu kurz (Zeitraum ab Juli 2026, ein Marktregime), um Parameter zu optimieren. Ergebnisse ohne diese zwei Spalten haben in der Vergangenheit dreimal zu falschen Schlüssen geführt (ADR-019, Reverify-Fund 2026-09-11, jetzt ADR-024).
 
+## Trigger bei Reaktivierung des Sentiment-Pfads (2026-09-27)
+
+`app.py::_check_sentiment_path_trigger(cfg)`, aufgerufen aus `_reschedule()`. Schickt **eine** Telegram-Nachricht, sobald `daily_pick.sentiment_scan_actionable=true` **und** `ki_enabled=false` – die Kopplung aus ADR-022 (Claude-Sentiment lohnt nur, wenn der Pfad überhaupt Kaufsignale liefert) soll nicht in Vergessenheit geraten.
+
+- **Warum in `_reschedule()` und nicht im Scan:** `_reschedule()` läuft direkt nach jedem `POST /api/config`. Der Hinweis kommt damit binnen Sekunden nach dem Umschalten im Einstellungen-Tab, nicht erst beim nächsten Vollscan. Zusätzlich beim Service-Start – deckt eine Config-Änderung per SSH ab.
+- **Zustandsbasiert, nicht „einmal und nie wieder":** Marker `.sentiment_path_notified` (gitignored). Pfad wieder aus → Marker wird gelöscht, eine erneute Aktivierung meldet wieder. Bei bereits aktivem `ki_enabled` wird der Marker gesetzt **ohne** zu senden (Entscheidung getroffen, Hinweis wäre Rauschen) – verhindert auch, dass ein späteres Abschalten von `ki_enabled` rückwirkend eine Meldung auslöst.
+- **Fehlerfall sendet erneut:** schlägt `_tg_post()` fehl, wird der Marker **nicht** gesetzt – der nächste `_reschedule()` versucht es wieder, statt den Hinweis still zu verlieren.
+
+## Altersobergrenze in allen drei Trackern (Todo #300, 2026-09-27)
+
+`_MAX_AGE_CAL_DAYS`: `forward_tracker.py`/`scan_tracker.py` **60** (längster Horizont 20 Handelstage ≈ 28 Kalendertage, Rest Puffer für Handelsaussetzungen), `value_tracker.py` **500** (250 Handelstage ≈ 350). Offene Zeilen älter als die Grenze werden übersprungen, **nicht gelöscht** – sie bleiben als `ret_pct IS NULL` stehen und fallen aus allen Auswertungen heraus, wie bisher.
+
+- **Gemessener Effekt ist klein** (12 Zeilen / 6 Ticker in `forward_returns`, 0 in `scan_forward_returns`): meine Todo-Begründung „Arbeit wächst unbegrenzt" war eine unbelegte Annahme und ist bei der Messung gefallen. Die Grenze bleibt als Schutz gegen künftiges Wachstum.
+- ⚠️ **Der echte Hebel, gemessen am 2026-09-27 und noch offen (Todo #303):** `scan_tracker.py` macht **8.289 yfinance-Downloads je Tageslauf für nur 800 verschiedene Ticker** (Faktor **10,4×**, ~21 Min Laufzeit täglich), weil die Gruppierung `(ticker, snapshot_id)` ist und derselbe Ticker in bis zu 36 offenen Snapshot-Tagen steht. Lösung: je Ticker ein Download ab dem ältesten offenen Snapshot-Datum, dann per Datums-Index in die Reihe greifen. **Baseline muss weiterhin der Close des Snapshot-Tages aus derselben split-bereinigten Reihe sein (ADR-019)** – sonst wiederholt sich der WETO-Fehler. `forward_tracker.py` ist nicht betroffen (92 Downloads / 92 Ticker).
+
+## Pitfall: zwei verschiedene Zeitstempel-Formate in signals.db
+
+`alerts.alert_ts` und `signals.signal_ts` enden auf **`+00:00`**, `scan_snapshots.snapshot_ts` dagegen auf **`Z`** (kommt aus `results.json` → `scanned_at`). `datetime.fromisoformat()` versteht die `Z`-Form erst **ab Python 3.11** – der Server läuft auf 3.12.3 (geprüft 2026-09-27). Wer Alters- oder Differenzrechnungen über Zeitstempel baut, muss beide Formen testen; der Logiktest zu Todo #300 tut das.
+
 ## tickers.csv erneuern (quartalsweise)
 
 ```bash
