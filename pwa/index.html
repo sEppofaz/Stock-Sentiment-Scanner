@@ -771,6 +771,11 @@ tr:last-child td{border-bottom:none}
     </div>
     <div id="value-status" style="font-size:.8rem;color:var(--muted);margin:8px 0 16px"></div>
 
+    <div class="section-title">Langzeit-Performance</div>
+    <div class="es-note" id="value-perf-note">Horizonte 60/120/250 Handelstage (≈ 3/6/12 Monate) statt der 1/5/20 Tage der anderen Layer – ein Value-Pick braucht Monate. Erste belastbare Zahlen daher nicht vor Anfang Dezember 2026.</div>
+    <div class="es-stats-grid" id="value-perf"></div>
+    <div id="value-perf-extra" style="font-size:.78rem;color:var(--muted);margin:-6px 0 16px"></div>
+
     <div class="section-title">Top-Kandidaten</div>
     <div id="value-signals"></div>
     <div id="value-signals-empty" style="display:none" class="es-empty">Noch keine Value-Signale – Scan starten oder auf den nächsten Samstag warten (falls aktiviert).</div>
@@ -990,11 +995,12 @@ tr:last-child td{border-bottom:none}
         <p class="info-p"><b>Distress-Veto:</b> Aktien mit Current Ratio &lt; 1 <i>und</i> negativer Eigenkapitalrendite werden unabhängig vom Score ausgeschlossen — „billig, aber wahrscheinlich aus gutem Grund" statt echter Chance.</p>
         <p class="info-p"><b>F-Score (reduziert):</b> Angelehnt an den Piotroski-F-Score, aber nur mit den Kriterien, die ohne Vorjahresvergleich prüfbar sind (Finnhub liefert keine Zeitreihe dafür) — Anzeige z.&nbsp;B. „4/5" heißt 4 von 5 <i>verfügbaren</i> Kriterien erfüllt, kein vollständiger 0–9-Score.</p>
         <p class="info-p"><b>Läuft automatisch</b> samstags 06:00 UTC über alle Ticker (~85 Minuten), sofern in den Einstellungen aktiviert — bewusst am Wochenende, weil Fundamentaldaten sich nicht untertägig ändern und dort kein anderer Job um das Finnhub-Kontingent konkurriert. „🔍 Jetzt scannen" startet einen Testlauf sofort, unabhängig vom Aktiv-Schalter.</p>
+        <p class="info-p"><b>Langzeit-Performance:</b> Der Value-Layer wird über <b>60/120/250 Handelstage</b> (≈ 3/6/12 Monate) ausgewertet statt über die 1/5/20 Tage der anderen Layer — über 20 Tage würde man bei Value-Picks fast nur Marktrauschen messen. Angezeigt werden Trefferquote und Median-Rendite je Horizont, dazu Payoff-Ratio, Expectancy je Position und der Vergleich zum Small-Cap-Index IWM. Mehrfach-Treffer desselben Tickers in aufeinanderfolgenden Wochen zählen nur <i>einmal</i>, sonst wäre die Stichprobe künstlich aufgebläht. Die Zahlen bleiben bewusst getrennt von der Analyse im Tab „Analyse" — der Layer soll seine eigene Evidenz aufbauen.</p>
         <div class="info-disclaimer">Value-Picks brauchen typischerweise Monate bis Jahre, bis sich eine Unterbewertung auflöst — anders als bei den Frühsignalen sind kurzfristige Kursbewegungen kein sinnvoller Erfolgsmaßstab. Kein Investment-Advice.</div>
       </div>
 
       <div class="info-disclaimer">Kein Investment-Advice. Nur Sentiment-Daten aus Medienberichten. Keine Kauf- oder Verkaufsempfehlung.</div>
-      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.32 · 2026-09-26 · a sEpp-App</p>
+      <p style="text-align:center;font-size:.75rem;color:var(--muted);margin-top:16px">Version 1.33 · 2026-09-27 · a sEpp-App</p>
     </div>
   </div>
 </div>
@@ -2132,7 +2138,41 @@ async function loadEarlySignals() {
 // ── Value/Quality-Screening ──────────────────────────────────────────────
 let _valueStatusInterval = null;
 
+// Eigene Langzeit-Auswertung des Value-Layers – bewusst getrennt von der
+// Analyse im Tab „Analyse" (andere Horizonte, andere Semantik, kein
+// Zusammenrechnen mit Sentiment/Frühsignalen, siehe ADR-022-Lehre).
+async function loadValuePerformance() {
+  const grid = document.getElementById('value-perf');
+  const extra = document.getElementById('value-perf-extra');
+  try {
+    const r = await fetch('/sentiment/api/value/performance');
+    const d = await r.json();
+    const horizons = ['60', '120', '250'];
+    grid.innerHTML = horizons.map(h => {
+      const s = (d.horizons || {})[h] || {};
+      const hit = s.hit_rate_pct != null ? `${Math.round(s.hit_rate_pct)}%` : '–';
+      const med = s.median_ret_pct;
+      const cls = med == null ? '' : (med >= 0 ? 'pos' : 'neg');
+      const medStr = med == null ? '–' : `${med >= 0 ? '+' : ''}${med.toFixed(1)}%`;
+      return `<div class="es-stat-card">
+        <div class="es-stat-h">${h} Handelstage</div>
+        <div class="es-stat-hit">${hit}</div>
+        <div class="es-stat-ret ${cls}">Median ${medStr}</div>
+        <div class="es-stat-n">${s.n || 0} ausgewertet${s.pending ? ` · ${s.pending} offen` : ''}</div>
+      </div>`;
+    }).join('');
+    const h60 = (d.horizons || {})['60'] || {};
+    extra.innerHTML = h60.n
+      ? `60 Tage: Payoff-Ratio ${h60.payoff_ratio ?? '–'} · Expectancy ${h60.expectancy_pct >= 0 ? '+' : ''}${h60.expectancy_pct}%/Position · vs. IWM ${h60.vs_iwm_hit_rate_pct ?? '–'}% · ${d.total_signals} Signale erfasst (je Ticker dedupliziert)`
+      : `${d.total_signals || 0} Signale erfasst, noch keiner reif – der Tracker läuft samstags und trägt fertige Horizonte automatisch nach.`;
+  } catch (e) {
+    grid.innerHTML = '';
+    extra.textContent = 'Langzeit-Auswertung konnte nicht geladen werden.';
+  }
+}
+
 async function loadValueSignals() {
+  loadValuePerformance();
   try {
     const r = await fetch('/sentiment/api/value-signals');
     const d = await r.json();

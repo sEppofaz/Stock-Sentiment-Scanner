@@ -365,6 +365,15 @@ def _reschedule():
             _do_value_scan, "cron", hour=6, minute=0,
             day_of_week="sat", timezone="UTC", id="value_scan",
         )
+        # Langzeit-Tracker (60/120/250 Handelstage): wöchentlich reicht – die
+        # Horizonte sind Monate, ein täglicher Lauf würde nur dieselben noch
+        # nicht reifen Signale erneut herunterladen. 09:00 UTC liegt sicher
+        # nach dem Value-Scan (06:00 + ~86 Min) und nutzt ohnehin nur
+        # yfinance, konkurriert also nicht um den Finnhub-Throttle.
+        scheduler.add_job(
+            _do_value_tracker, "cron", hour=9, minute=0,
+            day_of_week="sat", timezone="UTC", id="value_tracker",
+        )
 
     log.info(
         "Scan-Zeiten: %s (Mo–Fr UTC) + Portfolio-Scan alle 15 Min :12/:27/:42/:57 America/New_York (gestaffelt ggü. EDGAR-Jobs)",
@@ -520,6 +529,18 @@ def _do_value_scan():
         run_value_scan(cfg)
     except Exception:
         log.exception("Value-Scan fehlgeschlagen")
+
+
+def _do_value_tracker():
+    # Kein enabled-Guard über den Scheduler hinaus nötig: der Job wird in
+    # _reschedule() nur bei value_layer.enabled angelegt. Ein deaktivierter
+    # Layer friert damit auch die Langzeit-Auswertung ein – bewusst so, analog
+    # es_tracker unter early_signals.enabled.
+    try:
+        from value_tracker import run_value_tracker
+        run_value_tracker(_load_cfg())
+    except Exception:
+        log.exception("Value-Tracker fehlgeschlagen")
 
 
 def _do_weekly_analysis():
@@ -1058,6 +1079,20 @@ def api_value_signals():
             "SELECT ticker, signal_type, signal_ts, score, details_json FROM signals "
             "WHERE signal_type='value' ORDER BY signal_ts DESC, score DESC LIMIT 100")]
     return jsonify({"signals": signals})
+
+
+@app.route("/sentiment/api/value/performance")
+@login_required
+def api_value_performance():
+    """Eigene Langzeit-Auswertung des Value-Layers (60/120/250 Handelstage).
+    Reine SQL-/Statistik-Abfrage auf bereits gefüllten Zeilen – kein yfinance-
+    Call, kein Finnhub-Call, keine Kosten. Der Tracker selbst läuft samstags."""
+    from value_tracker import analyze_value_performance
+    try:
+        return jsonify(analyze_value_performance())
+    except Exception:
+        log.exception("Value-Performance-Auswertung fehlgeschlagen")
+        return jsonify({"error": "Auswertung fehlgeschlagen"}), 500
 
 
 @app.route("/sentiment/api/value/run", methods=["POST"])

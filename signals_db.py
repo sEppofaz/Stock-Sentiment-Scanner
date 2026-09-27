@@ -88,6 +88,17 @@ CREATE TABLE IF NOT EXISTS scan_forward_returns (
     PRIMARY KEY (snapshot_id, horizon_days)
 );
 
+CREATE TABLE IF NOT EXISTS value_forward_returns (
+    signal_id     INTEGER NOT NULL REFERENCES signals(id),
+    horizon_days  INTEGER NOT NULL,   -- 60 | 120 | 250 (Handelstage ≈ 3/6/12 Monate)
+    ret_pct       REAL,
+    filled_ts     TEXT,
+    price_at_signal REAL,             -- Referenz-Close, den value_tracker.py verwendet hat
+    benchmark_iwm_ret_pct REAL,
+    benchmark_spy_ret_pct REAL,
+    PRIMARY KEY (signal_id, horizon_days)
+);
+
 CREATE TABLE IF NOT EXISTS weekly_reports (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     report_ts          TEXT NOT NULL,   -- ISO 8601 UTC, Erzeugungszeitpunkt
@@ -174,7 +185,8 @@ def init_db():
 def cleanup_old_data() -> tuple[int, int]:
     """Prunt operative Historientabellen, die unbegrenzt wachsen (M8).
     signals/alerts/forward_returns sowie scan_snapshots/scan_forward_returns/
-    weekly_reports bleiben unangetastet – das ist die Validierungshistorie
+    value_forward_returns/weekly_reports bleiben unangetastet – das ist die
+    Validierungshistorie
     (Trefferquote/Rendite, wöchentliche Performance-Analyse), die soll
     erhalten bleiben."""
     with get_conn() as conn:
