@@ -40,3 +40,9 @@ Setzt voraus, dass zu jedem Zeitpunkt höchstens ein aktives Verkaufssignal pro 
 - Positionen ohne gesetztes `trailing_stop_pct` (alle vor 2026-08-25 angelegten, aktuell nur IMNM als echte Position) bleiben ohne Preis-Signal, bis der Wert nachträglich über die Portfolio-Karte gesetzt wird.
 - `run_portfolio_scan()` bekommt neu `cfg` als Parameter (vorher intern nicht verfügbar) – bei Aufrufen ohne mitgegebene Config (Hintergrund-Threads aus den Add/Convert-Endpoints) wird sie lazy nachgeladen.
 - `_send_telegram_sell()` toleriert jetzt `sent=None` (Preis-Signal kann auch dann feuern, wenn der parallele Sentiment-Fetch im selben Zyklus fehlschlug).
+
+---
+
+## Nachtrag 2026-09-27
+
+Der Default von 15% war beim Schreiben dieser ADR gesetzt, nicht gemessen. Am 2026-09-27 wurde er erstmals gegen Alternativen von 5% bis 30% backgetestet (`ts_backtest.py`, n=207 deduplizierte `insider_buy`-Fälle). Ergebnis: **Der Wert bleibt bei 15%** – die Stichprobe deckt nur ein Marktregime ab, und die Rangfolge der Varianten kippt zwischen den beiden Stichprobenhälften vollständig. Begründung und die fünf verworfenen Alternativen: **ADR-024**. Der Mechanismus dieser ADR (pro Position, `peak_price` scan-owned, drei `sell_signal_source`-Werte) ist davon unberührt und bleibt unverändert gültig.

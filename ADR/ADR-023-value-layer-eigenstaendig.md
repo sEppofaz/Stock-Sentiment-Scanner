@@ -42,3 +42,9 @@ Setzt voraus, dass Finnhub Free Tier die verifizierten Felder (KGV, P/B, ROE, De
 - Erste aussagekräftige Auswertung erst nach Monaten möglich (Langzeit-Tracker noch nicht gebaut, PKA-Todo).
 - `value_layer.enabled` als Kill-Switch (Default `false`, am 2026-09-12 nach Aufbau + Tests von Josef auf `true` gesetzt) — jederzeit reversibel ohne Code-Änderung.
 - PWA-Version 1.30 → 1.31.
+
+---
+
+## Nachtrag 2026-09-27
+
+Der an mehreren Stellen dieser ADR als Voraussetzung genannte Langzeit-Tracker ist gebaut und live: `value_tracker.py`, Tabelle `value_forward_returns`, Horizonte 60/120/250 Handelstage, Scheduler-Job samstags 09:00 UTC, Auswertung über `/api/value/performance` und den Value-Tab (v1.33). Die Entscheidung gegen Combo-Scoring bleibt damit unverändert in Kraft – sie ist jetzt aber überprüfbar: erste gefüllte 60-Tage-Werte ab Anfang Dezember 2026, belastbare Payoff-/Expectancy-Zahlen entsprechend später. Die Auswertung ist bewusst getrennt von `weekly_analysis.py` implementiert (eigene Funktion, eigener Endpoint), damit Value-Zahlen nicht versehentlich mit Sentiment-/Frühsignal-Zahlen zusammenfließen.
