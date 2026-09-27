@@ -13,3 +13,6 @@ config.json
 signals.db
 signals.db-wal
 signals.db-shm
+
+# Marker des Sentiment-Pfad-Triggers (Laufzeitzustand, siehe app.py)
+.sentiment_path_notified

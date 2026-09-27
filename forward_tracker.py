@@ -9,6 +9,19 @@ log = logging.getLogger("scanner")
 
 _BENCHMARKS = ("IWM", "SPY")
 
+# Obergrenze fuer offene Zeilen (Todo #300, 2026-09-27): der laengste Horizont
+# hier ist 20 Handelstage (~28 Kalendertage). Ist eine Zeile nach 60 Tagen noch
+# offen, liefert yfinance fuer diesen Ticker dauerhaft keine Kurse (delistet,
+# Ticker-Wechsel) - ohne Grenze wuerde sie jeden Werktag erneut geladen, ohne je
+# gefuellt werden zu koennen. 60 statt der rechnerisch noetigen ~40 Tage als
+# Puffer fuer laengere Handelsaussetzungen.
+# Messung bei Einfuehrung: betrifft aktuell 12 Zeilen / 6 Ticker in
+# forward_returns und 0 in scan_forward_returns - der Effekt ist heute klein,
+# die Grenze verhindert aber unbegrenztes Wachstum. Der groessere Hebel liegt
+# woanders (scan_tracker laedt je Snapshot statt je Ticker), siehe PKA-Logbuch.
+_MAX_AGE_CAL_DAYS = 60
+
+
 
 def _get_benchmark_closes(symbol: str, start_date: str, cache: dict):
     """Cached pro (symbol, start_date) innerhalb EINES Tracker-Laufs – mehrere
@@ -22,7 +35,8 @@ def _get_benchmark_closes(symbol: str, start_date: str, cache: dict):
 
 
 def run_tracker(cfg: dict) -> None:
-    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat(timespec="seconds")
     with get_conn() as conn:
         open_rows = conn.execute(
             "SELECT fr.alert_id, fr.horizon_days, a.ticker, a.alert_ts, a.price_at_alert "
@@ -32,7 +46,11 @@ def run_tracker(cfg: dict) -> None:
     # Nach (ticker, alert_id) gruppieren – ein yfinance-Call pro Alert statt bis
     # zu drei identischer Downloads (je einer pro Horizont 1/5/20) (G7)
     by_alert: dict[tuple, list] = {}
+    skipped_old = 0
     for r in open_rows:
+        if (now - datetime.fromisoformat(r["alert_ts"])).days > _MAX_AGE_CAL_DAYS:
+            skipped_old += 1
+            continue
         by_alert.setdefault((r["ticker"], r["alert_id"]), []).append(r)
 
     bench_cache: dict[tuple, object] = {}
@@ -76,4 +94,5 @@ def run_tracker(cfg: dict) -> None:
                 filled += 1
             except Exception as e:
                 log.warning("Tracker %s h=%d: %s", ticker, r["horizon_days"], e)
-    log.info("Forward-Tracker: %d Returns gefüllt", filled)
+    log.info("Forward-Tracker: %d Returns gefüllt, %d aufgegeben (offen und älter als %d Tage)",
+             filled, skipped_old, _MAX_AGE_CAL_DAYS)

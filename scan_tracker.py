@@ -16,6 +16,19 @@ log = logging.getLogger("scanner")
 
 _BENCHMARKS = ("IWM", "SPY")
 
+# Obergrenze fuer offene Zeilen (Todo #300, 2026-09-27): der laengste Horizont
+# hier ist 20 Handelstage (~28 Kalendertage). Ist eine Zeile nach 60 Tagen noch
+# offen, liefert yfinance fuer diesen Ticker dauerhaft keine Kurse (delistet,
+# Ticker-Wechsel) - ohne Grenze wuerde sie jeden Werktag erneut geladen, ohne je
+# gefuellt werden zu koennen. 60 statt der rechnerisch noetigen ~40 Tage als
+# Puffer fuer laengere Handelsaussetzungen.
+# Messung bei Einfuehrung: betrifft aktuell 12 Zeilen / 6 Ticker in
+# forward_returns und 0 in scan_forward_returns - der Effekt ist heute klein,
+# die Grenze verhindert aber unbegrenztes Wachstum. Der groessere Hebel liegt
+# woanders (scan_tracker laedt je Snapshot statt je Ticker), siehe PKA-Logbuch.
+_MAX_AGE_CAL_DAYS = 60
+
+
 
 def _get_benchmark_closes(symbol: str, start_date: str, cache: dict):
     """Cached pro (symbol, start_date) innerhalb EINES Tracker-Laufs – analog
@@ -27,7 +40,8 @@ def _get_benchmark_closes(symbol: str, start_date: str, cache: dict):
 
 
 def run_scan_tracker(cfg: dict) -> None:
-    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat(timespec="seconds")
     with get_conn() as conn:
         open_rows = conn.execute(
             "SELECT sfr.snapshot_id, sfr.horizon_days, s.ticker, s.snapshot_ts, "
@@ -38,7 +52,14 @@ def run_scan_tracker(cfg: dict) -> None:
     # Nach (ticker, snapshot_id) gruppieren – ein yfinance-Call pro Snapshot
     # statt bis zu drei identischer Downloads (analog G7-Fix in forward_tracker.py)
     by_snapshot: dict[tuple, list] = {}
+    skipped_old = 0
     for r in open_rows:
+        # snapshot_ts endet auf "Z" (aus results.json scanned_at), nicht auf
+        # "+00:00" wie alert_ts/signal_ts. datetime.fromisoformat() versteht das
+        # erst ab Python 3.11 – Server läuft auf 3.12, geprüft 2026-09-27.
+        if (now - datetime.fromisoformat(r["snapshot_ts"])).days > _MAX_AGE_CAL_DAYS:
+            skipped_old += 1
+            continue
         by_snapshot.setdefault((r["ticker"], r["snapshot_id"]), []).append(r)
 
     bench_cache: dict[tuple, object] = {}
@@ -88,4 +109,5 @@ def run_scan_tracker(cfg: dict) -> None:
                 filled += 1
             except Exception as e:
                 log.warning("Scan-Tracker %s h=%d: %s", ticker, r["horizon_days"], e)
-    log.info("Scan-Tracker: %d Returns gefüllt", filled)
+    log.info("Scan-Tracker: %d Returns gefüllt, %d aufgegeben (offen und älter als %d Tage)",
+             filled, skipped_old, _MAX_AGE_CAL_DAYS)

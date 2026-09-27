@@ -241,9 +241,70 @@ def _market_open() -> bool:
 scheduler = BackgroundScheduler()
 
 
+# Marker für den Sentiment-Pfad-Trigger (gitignored, wie alle Laufzeitdateien).
+# Zustandsbasiert statt „einmal und nie wieder": wird der Pfad später erneut
+# abgeschaltet, verschwindet der Marker und der Hinweis kann bei einer späteren
+# Reaktivierung wieder feuern.
+_SENTIMENT_PATH_MARKER = BASE_DIR / ".sentiment_path_notified"
+
+
+def _check_sentiment_path_trigger(cfg: dict) -> None:
+    """Meldet per Telegram, sobald der Sentiment-Scan wieder ein Kaufsignalweg
+    ist (`daily_pick.sentiment_scan_actionable`), solange `ki_enabled` aus ist.
+
+    Hintergrund (Josef-Wunsch 2026-09-27): Seit ADR-022 ist der Sentiment-Pfad
+    abgeschaltet, deshalb wäre Claude-Sentiment (~6€/Monat) aktuell Geld für
+    einen inerten Pfad. Diese Kopplung soll nicht in Vergessenheit geraten –
+    sobald sich die Prämisse ändert, kommt der Hinweis von selbst.
+
+    Sitzt bewusst in `_reschedule()` und nicht im Scan: `_reschedule()` läuft
+    direkt nach jedem `POST /api/config`, der Hinweis kommt also binnen Sekunden
+    nach dem Umschalten in der PWA – nicht erst beim nächsten Vollscan am
+    Folgetag. Zusätzlich beim Service-Start, was den Fall abdeckt, dass die
+    Config von außen (z.B. per SSH) geändert wurde."""
+    actionable = cfg.get("daily_pick", {}).get("sentiment_scan_actionable", False)
+    ki_on = cfg.get("ki_enabled", False)
+    already = _SENTIMENT_PATH_MARKER.exists()
+
+    if not actionable:
+        if already:
+            # Pfad wieder abgeschaltet → Marker zurücksetzen, damit eine erneute
+            # Aktivierung wieder gemeldet wird.
+            _SENTIMENT_PATH_MARKER.unlink(missing_ok=True)
+            log.info("Sentiment-Pfad wieder inaktiv – Trigger-Marker zurückgesetzt")
+        return
+    if already or ki_on:
+        # ki_enabled=True: die Entscheidung ist getroffen, der Hinweis wäre nur
+        # noch Rauschen. Marker trotzdem setzen, damit ein späteres Abschalten
+        # von ki_enabled nicht rückwirkend eine Meldung auslöst.
+        _SENTIMENT_PATH_MARKER.write_text(datetime.now().isoformat(timespec="seconds"))
+        return
+
+    try:
+        from scanner import _tg_post
+        _tg_post(
+            "🔔 <b>Sentiment-Pfad ist wieder ein Kaufsignalweg</b>\n\n"
+            "<code>daily_pick.sentiment_scan_actionable</code> steht auf <b>true</b> – der "
+            "Sentiment-Scan kann ab jetzt wieder Tages-Picks liefern (war seit ADR-022, "
+            "12.09.2026, abgeschaltet).\n\n"
+            "Damit ist die offene Entscheidung zu <code>ki_enabled</code> relevant geworden: "
+            "Claude-Sentiment statt Keyword-NLP kostet <b>~0,28 €/Scan bzw. ~6 €/Monat</b> "
+            "(gemessen 27.09.2026, 1 Scan/Handelstag). Solange der Pfad abgeschaltet war, "
+            "hätte das nur die Qualität eines inerten Pfads verbessert – jetzt nicht mehr.\n\n"
+            "Umschalten im Einstellungen-Tab. PKA-Todo <code>9c02ac2f</code>."
+        )
+        _SENTIMENT_PATH_MARKER.write_text(datetime.now().isoformat(timespec="seconds"))
+        log.info("Sentiment-Pfad-Trigger gesendet (sentiment_scan_actionable=true, ki_enabled=false)")
+    except Exception:
+        # Kein Marker setzen – dann wird der Versand beim nächsten _reschedule()
+        # erneut versucht, statt den Hinweis still zu verlieren.
+        log.exception("Sentiment-Pfad-Trigger konnte nicht gesendet werden")
+
+
 def _reschedule():
     cfg = _load_cfg()
     scheduler.remove_all_jobs()
+    _check_sentiment_path_trigger(cfg)
 
     # Volle Scans (aus config, Zeiten sind UTC – Server-Systemzeit ist Europe/Berlin!)
     # Pro Eintrag try/except: eine manuell kaputt editierte config.json soll nicht
